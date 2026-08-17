@@ -420,13 +420,16 @@
     rows.forEach(function (row) {
       var stream = streamOf(row);
       var record = { row: row, stream: stream, status: 'pass', failures: [], warnings: [], transforms: [] };
+      // criteria form a pipeline: a later criterion sees the values an earlier
+      // one rewrote (e.g. a sub-cut-off result is already 0 for the range check)
+      var working = row;
       enabled.forEach(function (cfg) {
         var d = def(cfg.key);
         if (!d) return;
         if (d.stream !== stream) return;                      // criterion does not apply to this stream
         var stat = out.byCriterion[cfg.key];
         var res;
-        try { res = d.evaluate(row, cfg, ctx); }
+        try { res = d.evaluate(working, cfg, ctx); }
         catch (e) { res = fail('Criterion could not be evaluated: ' + e.message); }
         if (!res || res.status === 'skip') { stat.skipped++; return; }
         stat.evaluated++;
@@ -437,8 +440,10 @@
         if (res.status === 'fail') { stat.failed++; record.failures.push(entry); }
         else if (res.status === 'warning') { stat.warnings++; record.warnings.push(entry); }
         if (res.transforms && res.transforms.length) {
+          working = Object.assign({}, working);
           res.transforms.forEach(function (t) {
             stat.transformed++;
+            working[t.column] = t.value;
             record.transforms.push({ criterion: cfg.key, name: d.name, column: t.column, value: t.value, note: t.note });
           });
         }

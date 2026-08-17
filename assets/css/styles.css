@@ -799,7 +799,7 @@ table.tbl .cell-sub{font-size:11.5px;color:var(--ink-4)}
 .lr{display:flex;align-items:center;gap:var(--s4);padding:13px var(--s5);border-bottom:1px solid var(--line-2)}
 .lr:last-child{border-bottom:0}
 .lr .lr-main{min-width:0;flex:1 1 auto}
-.lr .lr-t{font-size:13px;font-weight:650}
+.lr .lr-t{font-size:13px;font-weight:650;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
 .lr .lr-d{font-size:12px;color:var(--ink-3);margin-top:2px;line-height:1.45}
 .lr .lr-act{flex:0 0 auto}
 

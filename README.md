@@ -1,8 +1,8 @@
-# ANALYTIX — Laboratory Analytics Validation Platform (Frontend Prototype)
+# LISA — Laboratory Information System Analysis (Frontend Prototype)
 
-A fully interactive, clickable prototype of a healthcare / laboratory **analytics validation platform**,
-built with **HTML5 + CSS3 + vanilla JavaScript only** — no React, Angular, Vue or any framework, and no
-build step, bundler or dependency install.
+A fully interactive, clickable prototype of a laboratory **analyte validation and CSV processing
+platform**, built with **HTML5 + CSS3 + vanilla JavaScript only** — no React, Angular, Vue or any
+framework, and no build step, bundler or dependency install.
 
 ## Run it
 
@@ -18,6 +18,55 @@ Prototype credentials:
 Email:    admin@analytics.com
 Password: Admin@123
 ```
+
+## LISA workflow (per analyte)
+
+An analyte (e.g. **Cocaine**, code `COC`) owns many run files, its own configuration and its own
+criteria. Inside an analyte the workflow is a 10-step stepper:
+
+```
+Upload Files → Analytics → Sample Types → Criteria → Fields → Rules
+             → QC Validation → Approval → Patient Testing → Results
+```
+
+* **Analyte Configuration** (`Analyte Configuration` button on any analyte screen) — analyte name/code,
+  assay, matrix, **Reference Ratio Adjustment %**, and cut-off configuration (dynamic from the `WCS1`
+  control row, or a fixed value). Stored per analyte — every analyte carries its own values, and a table
+  on the screen shows them side by side. Saving bumps the **criteria version** and marks processed files
+  for re-processing.
+* **Multiple files per analyte** — `Cocaine_2026_08_01.csv … _08_04.csv` all belong to the same analyte
+  and are processed together. Each file keeps its own metadata and processing state; click a file to open
+  **File Details**: file ID, analyte, assay, upload time, uploaded by, size, rows, columns, processing
+  status, validation status, criteria version, processing start/completion time, passed/failed/warning
+  counts, per-criterion breakdown, the values derived for that run, and the outputs.
+* **Sample classification** — LISA definitions out of the box: calibrators `Cal_1…Cal_7` /
+  Sample Type `Standard`; controls `WSC_*` / `WCS*` / `UC` / Sample Type `Control`; patients numeric
+  Sample ID / Sample Type `Unknown`. Patterns and Sample-Type values are editable per stream (`ID AND
+  Type` or `ID OR Type`), and blanks/double-blanks stay deliberately unmatched.
+* **Criteria Module** — the seven criteria, each with sample stream, mapped column, operator, threshold,
+  calculation and enable/disable, plus `Column Mapping`, `Test Criteria` (dry run) and
+  `Execute Processing` (row-by-row over every file):
+
+  | Criterion | Stream | Reads | Default |
+  |---|---|---|---|
+  | Check Calibrator Accuracy | Standard | `% Diff` | > 25 % → fail |
+  | Check Control Accuracy | Control | `% Diff` | > 25 % → fail |
+  | Check Internal Standard Errors | Unknown | `ISTD Area`, `% Recovery` | missing peak · recovery ratio < 90 % |
+  | Remove Concentrations Below Cut-off | Unknown | `Conc. (ng/mL)` | < cut-off → **value replaced with 0** |
+  | Check Ion Ratio | Unknown | `Ref 1 Actual Ratio` | outside calibrator range ± Reference Ratio Adjustment |
+  | Check Retention Time | Unknown | `Found RT` | outside calibrator average ± 20 % |
+  | Check Calibration Range | Unknown | `Conc. (ng/mL)` | outside lowest–highest calibrator → warning |
+
+  Criteria form a **pipeline** — a later criterion sees what an earlier one rewrote, so a result zeroed
+  by the cut-off is not then flagged as below-range.
+* **Derived values** are computed from the run itself and shown on screen with their provenance: cut-off
+  (Std. Conc. of the cut-off control), ion-ratio range (lowest/highest calibrator ratio widened by the
+  analyte's adjustment, zero ratios excluded by default), RT window, calibrated measuring range.
+* **Outputs per file** — `Download Passed File` (rows that passed, with the criteria adjustments applied
+  plus `LISA Status` / `LISA Adjustments`) and `Download Exceptions Report` (one row per failed criterion
+  with analyte, assay, stream, source file, criterion, failed column, reason, severity, criteria version
+  and processing time). The passed file is **held** while any calibrator/control criterion fails or a run
+  is stale; the exceptions report is always available.
 
 ## The core business rule
 

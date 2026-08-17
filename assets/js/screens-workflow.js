@@ -107,6 +107,8 @@
       act.appendChild(UI.iconBtn('eye', 'Preview this file', function () { App.go('analytic/' + a.id + '/preview?file=' + encodeURIComponent(f.id)); }));
       act.appendChild(UI.iconBtn('trash', 'Remove this file', function () { removeOne(a, f); }));
       row.appendChild(act);
+      U.$('.lr-main', row).style.cursor = 'pointer';
+      U.$('.lr-main', row).addEventListener('click', function () { Screens.fileDetails(a, f.id); });
       list.appendChild(row);
     });
     wrap.appendChild(list);
@@ -147,6 +149,15 @@
     foot.appendChild(cont);
     wrap.appendChild(foot);
     return wrap;
+  }
+
+  /** Upload / processing status shown per file. */
+  function fileStatusBadge(a, f) {
+    var run = Store.runOf(a, f.id);
+    if (!run) return '<span class="badge badge-neutral">Uploaded</span>';
+    if (run.status === 'stale') return '<span class="badge badge-warn">Re-process required</span>';
+    return '<span class="badge badge-success">Processed · ' + U.fmtInt(run.passed) + ' passed' +
+      (run.failed ? ' · ' + U.fmtInt(run.failed) + ' failed' : '') + '</span>';
   }
 
   function pickFiles(a) {
@@ -391,13 +402,42 @@
         value: function (row) { return row[c]; }
       });
     });
-    var table = UI.dataTable({
-      title: focus ? 'Rows from ' + focus.name : 'Merged sample data', columns: columns, rows: recs, pageSize: 25,
+    var hidden = {};
+    var tableCard = el('div', {});
+    var colBtn = UI.btn('Columns', 'btn-secondary btn-sm', function () {
+      var box = el('div', {});
+      box.innerHTML = '<p style="font-size:13px;color:var(--ink-2)">Choose the columns to display. Hidden columns stay in the data ' +
+        'and remain available to rules and criteria.</p>';
+      var grid = el('div', { class: 'grid mt4', style: 'grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:8px' });
+      columns.forEach(function (col) {
+        grid.appendChild(UI.checkbox(col.label, !hidden[col.key], function (v) { hidden[col.key] = !v; }));
+      });
+      box.appendChild(grid);
+      var m = UI.modal({
+        title: 'Column visibility', size: 'wide', body: box,
+        footer: [
+          UI.btn('Show all', 'btn-secondary', function () { hidden = {}; m.close(); paintTable(); }),
+          UI.btn('Apply', 'btn-primary', function () { m.close(); paintTable(); }, { icon: 'check' })
+        ]
+      });
+    }, { icon: 'table', iconSize: 14 });
+
+    function paintTable() {
+      tableCard.innerHTML = '';
+      tableCard.appendChild(buildTable());
+    }
+    function buildTable() {
+      return UI.dataTable({
+      title: focus ? 'Rows from ' + focus.name : 'Merged sample data',
+      columns: columns.filter(function (c2) { return !hidden[c2.key]; }), rows: recs, pageSize: 25,
+      toolbar: [colBtn],
       searchPlaceholder: 'Search any column…',
       searchText: function (r) { return cols.map(function (c) { return r[c]; }).join(' ') + ' ' + r.__src; },
       exportName: (a.code || 'analytic') + '_preview', unit: 'rows', compact: true
-    });
-    body.appendChild(Screens.card({ flush: true, body: table }));
+      });
+    }
+    paintTable();
+    body.appendChild(Screens.card({ flush: true, body: tableCard }));
 
     var foot = el('div', { class: 'row mt4' });
     foot.appendChild(UI.btn('Back to upload', 'btn-secondary', function () { App.go('analytic/' + a.id + '/upload'); }, { icon: 'arrowLeft' }));
@@ -760,6 +800,23 @@
       calibration: c.calibration || (suggested ? suggested.calibration : ''),
       patient: c.patient || (suggested ? suggested.patient : '')
     };
+
+    /* mode switch: value mapping (generic) or LISA Sample ID + Sample Type patterns */
+    var modeBar = el('div', { class: 'row mb4' });
+    modeBar.appendChild(el('span', { class: 'muted', style: 'font-size:12.5px', text: 'Classification method' }));
+    modeBar.appendChild(UI.segmented([
+      { value: 'values', label: 'Value mapping' },
+      { value: 'patterns', label: 'LISA patterns' }
+    ], c.mode === 'patterns' ? 'patterns' : 'values', function (v) {
+      if (v === 'patterns') Screens.patternClassification(a);
+      else App.go('analytic/' + a.id + '/mapping?mode=values');
+    }));
+    body.appendChild(modeBar);
+
+    if (c.mode === 'patterns' && c.patterns) {
+      body.appendChild(Screens.patternSummaryCard(a));
+      return Screens.workflowShell(a, 'mapping', body);
+    }
 
     var form = el('div', {});
     var fieldSel = UI.fieldGroup({

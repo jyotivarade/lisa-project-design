@@ -70,6 +70,8 @@
     head.appendChild(left);
 
     var acts = el('div', { class: 'page-head-actions' });
+    acts.appendChild(UI.btn('Analyte Configuration', 'btn-secondary btn-sm', function () { App.go('analytic/' + a.id + '/config'); }, { icon: 'settings', iconSize: 14 }));
+    acts.appendChild(UI.btn('Criteria Module', 'btn-secondary btn-sm', function () { App.go('analytic/' + a.id + '/criteria'); }, { icon: 'rules', iconSize: 14 }));
     acts.appendChild(UI.btn('Validation History', 'btn-secondary btn-sm', function () { App.go('analytic/' + a.id + '/history'); }, { icon: 'version', iconSize: 14 }));
     acts.appendChild(UI.btn('Audit Trail', 'btn-secondary btn-sm', function () { App.go('audit?analytic=' + a.id); }, { icon: 'audit', iconSize: 14 }));
     head.appendChild(acts);
