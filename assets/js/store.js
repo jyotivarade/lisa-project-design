@@ -30,7 +30,8 @@
   var STEPS = [
     { key: 'upload', label: 'Upload Files', hint: 'One or many data files' },
     { key: 'analytics', label: 'Analytics', hint: 'Analytics found in the files' },
-    { key: 'mapping', label: 'Sample Types', hint: 'Control / calibration / patient' },
+    { key: 'mapping', label: 'Sample Types', hint: 'Calibrators / controls / patients' },
+    { key: 'criteria', label: 'Criteria', hint: 'LISA criteria module' },
     { key: 'fields', label: 'Fields', hint: 'Fields used for validation' },
     { key: 'rules', label: 'Rules', hint: 'Validation configuration' },
     { key: 'validation', label: 'QC Validation', hint: 'Control + calibration run' },
@@ -193,7 +194,14 @@
     var spec = Seed.CATALOG.filter(function (c) { return c.id === a.seed.catalogId; })[0];
     if (!spec) return;
     (a.files || []).forEach(function (f, i) {
-      var ds = Seed.generateDataset(spec.gen, spec.seedNo + i * 17, f.seedPart);
+      var ds;
+      if (spec.lisa) {
+        var fs = spec.lisa.files.filter(function (x) { return x.name === f.name; })[0] || spec.lisa.files[i];
+        if (!fs) return;
+        ds = Seed.generateLisaFile(spec.lisa, spec.seedNo + i * 23, fs);
+      } else {
+        ds = Seed.generateDataset(spec.gen, spec.seedNo + i * 17, f.seedPart);
+      }
       f.records = ds.rows;
       f.columns = ds.columns;
     });
@@ -592,6 +600,9 @@
     out.upload = hasData(a) ? 'done' : 'current';
     out.analytics = !hasData(a) ? 'pending' : (a.analyteScope.applied ? 'done' : 'current');
     out.mapping = !a.analyteScope.applied ? 'pending' : (a.classification.applied ? 'done' : 'current');
+    var qc = criteriaQCStatus(a);
+    out.criteria = !a.classification.applied ? 'pending'
+      : (qc.ran && qc.stale === 0 ? (qc.passed ? 'done' : 'failed') : 'current');
     out.fields = !a.classification.applied ? 'pending' : (fieldsConfirmed(a) ? 'done' : 'current');
     out.rules = !fieldsConfirmed(a) ? 'pending' : (activeRules(a).length ? 'done' : 'current');
     if (!activeRules(a).length) out.validation = 'pending';
@@ -1199,6 +1210,299 @@
     return base + (scope === 'patient' ? '_Patient_Failed_v' : '_QC_Failed_v') + a.version + '.csv';
   }
 
+  /* ============================================================
+     LISA — analyte configuration, criteria module, per-file processing
+     ============================================================ */
+
+  /** Analyte/assay configuration, lazily initialised from the analytic itself. */
+  function assayOf(a) {
+    a.assay = a.assay || {};
+    if (!a.assay.analyteName) a.assay.analyteName = a.name;
+    if (!a.assay.analyteCode) a.assay.analyteCode = a.code || '';
+    if (!a.assay.assayName) a.assay.assayName = a.name;
+    if (a.assay.referenceRatioAdjustment === undefined || a.assay.referenceRatioAdjustment === null) {
+      a.assay.referenceRatioAdjustment = 10;
+    }
+    if (!a.assay.cutoffMode) a.assay.cutoffMode = 'wcs1';
+    if (!a.assay.cutoffSampleId) a.assay.cutoffSampleId = 'WCS1';
+    if (!a.assay.criteriaVersion) a.assay.criteriaVersion = '1.0';
+    if (a.assay.ignoreZeroRatios === undefined) a.assay.ignoreZeroRatios = true;
+    return a.assay;
+  }
+
+  function criteriaOf(a) {
+    if (!a.criteria || !a.criteria.length) a.criteria = Criteria.defaultConfig();
+    return a.criteria;
+  }
+
+  /** Column roles → real uploaded columns (auto-mapped once, then user-owned). */
+  function columnMapOf(a) {
+    var auto = Criteria.autoMap(a.fields || []);
+    if (!a.columnMap) { a.columnMap = auto; return a.columnMap; }
+    var names = fieldNames(a);
+    Object.keys(auto).forEach(function (role) {
+      var cur = a.columnMap[role];
+      if (!cur || names.indexOf(cur) === -1) a.columnMap[role] = auto[role];   // heal stale mappings
+    });
+    return a.columnMap;
+  }
+
+  /**
+   * Everything a criteria run needs: mapped columns, the classified streams and
+   * the values derived from this data (cut-off, ion-ratio range, RT window, …).
+   * Pass a fileId to derive per file (LISA derives per run/batch).
+   */
+  function criteriaContext(a, fileId) {
+    var g = groups(a);
+    function inFile(list) {
+      return fileId ? list.filter(function (r) { return r.__fid === fileId; }) : list;
+    }
+    var streams = {
+      calibrator: inFile(g.calibration),
+      control: inFile(g.control),
+      patient: inFile(g.patient),
+      unmatched: inFile(g.unmatched)
+    };
+    var map = columnMapOf(a);
+    var assay = assayOf(a);
+    var derived = Criteria.applyRtWindow(Criteria.derive(streams, map, assay), criteriaOf(a));
+    return { map: map, streams: streams, derived: derived, assay: assay, fileId: fileId || null };
+  }
+
+  function streamOfRow(a) {
+    var g = groups(a);
+    var index = {};
+    g.calibration.forEach(function (r) { index[r.__i] = 'calibrator'; });
+    g.control.forEach(function (r) { index[r.__i] = 'control'; });
+    g.patient.forEach(function (r) { index[r.__i] = 'patient'; });
+    return function (row) { return index[row.__i] || 'unmatched'; };
+  }
+
+  /** Bump the criteria version — every processed file becomes stale. */
+  function saveAssayConfig(a, patch, reason) {
+    var assay = assayOf(a);
+    var before = {
+      referenceRatioAdjustment: assay.referenceRatioAdjustment,
+      cutoffMode: assay.cutoffMode, cutoffSampleId: assay.cutoffSampleId,
+      cutoffValue: assay.cutoffValue, ignoreZeroRatios: assay.ignoreZeroRatios
+    };
+    Object.assign(assay, patch);
+    var changed = Object.keys(before).some(function (k) { return String(before[k]) !== String(assay[k]); });
+    assay.updatedAt = new Date().toISOString();
+    assay.updatedBy = (S.user && S.user.name) || DEMO_USER.name;
+    if (changed) {
+      assay.criteriaVersion = bumpVersion(assay.criteriaVersion);
+      audit(a, {
+        action: 'Analyte configuration changed',
+        detail: describeAssay(assay),
+        prev: 'Reference ratio ' + before.referenceRatioAdjustment + '% · cut-off ' + before.cutoffMode,
+        next: 'Reference ratio ' + assay.referenceRatioAdjustment + '% · cut-off ' + assay.cutoffMode,
+        reason: reason || '', kind: 'warn'
+      });
+      invalidateProcessing(a, 'Analyte configuration changed — criteria v' + assay.criteriaVersion);
+    } else {
+      audit(a, { action: 'Analyte configuration saved', detail: describeAssay(assay), reason: reason || '', kind: 'info' });
+    }
+    touch(a);
+    return assay;
+  }
+  function describeAssay(assay) {
+    return 'Reference Ratio Adjustment ' + assay.referenceRatioAdjustment + '% · cut-off ' +
+      (assay.cutoffMode === 'fixed' ? 'fixed ' + assay.cutoffValue : 'dynamic from ' + assay.cutoffSampleId) +
+      ' · criteria v' + assay.criteriaVersion;
+  }
+
+  function saveCriterion(a, key, patch, reason) {
+    var list = criteriaOf(a);
+    var cfg = list.filter(function (c) { return c.key === key; })[0];
+    if (!cfg) return null;
+    var d = Criteria.def(key);
+    var ctx = criteriaContext(a);
+    var before = Criteria.describe(cfg, ctx);
+    var wasEnabled = cfg.enabled;
+    Object.assign(cfg, patch);
+    var assay = assayOf(a);
+    assay.criteriaVersion = bumpVersion(assay.criteriaVersion);
+    audit(a, {
+      action: wasEnabled !== cfg.enabled
+        ? (cfg.enabled ? 'Criterion enabled' : 'Criterion disabled')
+        : 'Criterion configuration changed',
+      detail: (d ? d.name : key) + ' — criteria v' + assay.criteriaVersion,
+      prev: before, next: Criteria.describe(cfg, criteriaContext(a)),
+      reason: reason || '', kind: 'warn'
+    });
+    invalidateProcessing(a, 'Criteria configuration changed');
+    touch(a);
+    return cfg;
+  }
+
+  function setColumnRole(a, role, column, reason) {
+    var map = columnMapOf(a);
+    var before = map[role] || '—';
+    if (before === (column || '—')) return map;
+    map[role] = column || null;
+    var assay = assayOf(a);
+    assay.criteriaVersion = bumpVersion(assay.criteriaVersion);
+    audit(a, {
+      action: 'Criteria column mapping changed',
+      detail: Criteria.roleLabel(role) + ' → ' + (column || 'not mapped') + ' · criteria v' + assay.criteriaVersion,
+      prev: before, next: column || 'not mapped', reason: reason || '', kind: 'warn'
+    });
+    invalidateProcessing(a, 'Column mapping changed');
+    touch(a);
+    return map;
+  }
+
+  /** Mark every processed file stale (configuration moved on). */
+  function invalidateProcessing(a, reason) {
+    a.processing = a.processing || { runs: {} };
+    var stale = 0;
+    Object.keys(a.processing.runs).forEach(function (fid) {
+      var run = a.processing.runs[fid];
+      if (run.status === 'completed') { run.status = 'stale'; run.staleReason = reason; stale++; }
+    });
+    if (stale) {
+      audit(a, {
+        action: 'Processing invalidated',
+        detail: stale + ' processed file(s) need re-processing — ' + (reason || 'configuration changed'),
+        kind: 'warn'
+      });
+    }
+  }
+
+  function runOf(a, fileId) {
+    a.processing = a.processing || { runs: {} };
+    return a.processing.runs[fileId] || null;
+  }
+
+  /** Process ONE file row by row through the enabled criteria. */
+  function processFile(a, fileId) {
+    var file = (a.files || []).filter(function (f) { return f.id === fileId; })[0];
+    if (!file) return null;
+    var ctx = criteriaContext(a, fileId);
+    var rows = ctx.streams.calibrator.concat(ctx.streams.control, ctx.streams.patient, ctx.streams.unmatched);
+    var startedAt = new Date().toISOString();
+    var res = Criteria.process(rows, streamOfRow(a), criteriaOf(a), ctx);
+
+    var run = {
+      fileId: fileId, fileName: file.name,
+      status: 'completed',
+      criteriaVersion: assayOf(a).criteriaVersion,
+      configVersion: a.version,
+      startedAt: startedAt, completedAt: new Date().toISOString(),
+      total: res.total, passed: res.passed, failed: res.failed, warnings: res.warnings,
+      transformed: res.transformed,
+      counts: {
+        calibrator: ctx.streams.calibrator.length,
+        control: ctx.streams.control.length,
+        patient: ctx.streams.patient.length,
+        unmatched: ctx.streams.unmatched.length
+      },
+      byCriterion: res.byCriterion,
+      notMapped: res.notMapped,
+      derived: ctx.derived,
+      rows: res.rows.map(function (r) {
+        return {
+          i: r.row.__i, row: r.row.__row, status: r.status,
+          failures: r.failures, warnings: r.warnings, transforms: r.transforms
+        };
+      }),
+      processedBy: (S.user && S.user.name) || DEMO_USER.name
+    };
+    a.processing = a.processing || { runs: {} };
+    a.processing.runs[fileId] = run;
+    audit(a, {
+      action: 'File processed',
+      detail: file.name + ' — ' + U.fmtInt(res.total) + ' rows · ' + U.fmtInt(res.passed) + ' passed, ' +
+        U.fmtInt(res.failed) + ' failed, ' + U.fmtInt(res.warnings) + ' warning(s)' +
+        (res.transformed ? ', ' + U.fmtInt(res.transformed) + ' concentration(s) zeroed' : '') +
+        ' · criteria v' + run.criteriaVersion,
+      kind: res.failed ? 'warn' : 'ok'
+    });
+    touch(a);
+    return run;
+  }
+
+  function processAllFiles(a) {
+    var runs = (a.files || []).map(function (f) { return processFile(a, f.id); }).filter(Boolean);
+    var agg = runs.reduce(function (m, r) {
+      m.total += r.total; m.passed += r.passed; m.failed += r.failed;
+      m.warnings += r.warnings; m.transformed += r.transformed; return m;
+    }, { total: 0, passed: 0, failed: 0, warnings: 0, transformed: 0, files: runs.length });
+    a.processing.summary = Object.assign({ completedAt: new Date().toISOString() }, agg);
+    touch(a);
+    return { runs: runs, summary: a.processing.summary };
+  }
+
+  /** Dry run used by "Test Criteria" — nothing is stored. */
+  function testCriteria(a, fileId) {
+    var ctx = criteriaContext(a, fileId);
+    var rows = ctx.streams.calibrator.concat(ctx.streams.control, ctx.streams.patient, ctx.streams.unmatched);
+    var res = Criteria.process(rows, streamOfRow(a), criteriaOf(a), ctx);
+    res.derived = ctx.derived;
+    res.ranAt = new Date().toISOString();
+    return res;
+  }
+
+  /* ---------- per-file outputs ---------- */
+
+  /**
+   * The processed ("passed") file: every row that passed, with the criteria
+   * transformations applied — this is the dataset that goes back to the LIS.
+   */
+  function passedOutput(a, fileId) {
+    var run = runOf(a, fileId);
+    if (!run) return null;
+    var recs = recordsOf(a);
+    var cols = columnsOf(a);
+    var rows = [];
+    run.rows.forEach(function (r) {
+      if (r.status === 'fail') return;
+      var rec = recs[r.i];
+      if (!rec) return;
+      var out = {};
+      cols.forEach(function (c) { out[c] = rec[c] === undefined ? '' : rec[c]; });
+      (r.transforms || []).forEach(function (t) { out[t.column] = t.value; });
+      out['LISA Status'] = r.status === 'warning' ? 'PASS (warning)' : 'PASS';
+      out['LISA Adjustments'] = (r.transforms || []).map(function (t) { return t.column + '→' + t.value; }).join('; ');
+      rows.push(out);
+    });
+    return { columns: cols.concat(['LISA Status', 'LISA Adjustments']), rows: rows, run: run };
+  }
+
+  /** The exceptions report: one row per failed/flagged criterion. */
+  function exceptionsOutput(a, fileId) {
+    var run = runOf(a, fileId);
+    if (!run) return null;
+    var recs = recordsOf(a);
+    var cols = columnsOf(a);
+    var meta = ['Analyte', 'Assay', 'Sample Stream', 'Source File', 'Criterion', 'Failed Column',
+      'Failure Reason', 'Severity', 'Criteria Version', 'Processed At'];
+    var assay = assayOf(a);
+    var rows = [];
+    run.rows.forEach(function (r) {
+      var issues = (r.failures || []).concat(r.warnings || []);
+      if (!issues.length) return;
+      var rec = recs[r.i] || {};
+      issues.forEach(function (f) {
+        var line = {};
+        cols.forEach(function (c) { line[c] = rec[c] === undefined ? '' : rec[c]; });
+        line['Analyte'] = assay.analyteName || a.name;
+        line['Assay'] = assay.assayName || a.name;
+        line['Sample Stream'] = U.titleCase(f.stream || '');
+        line['Source File'] = run.fileName;
+        line['Criterion'] = f.name;
+        line['Failed Column'] = f.column;
+        line['Failure Reason'] = f.reason;
+        line['Severity'] = (r.failures || []).indexOf(f) > -1 ? 'Fail' : 'Warning';
+        line['Criteria Version'] = 'v' + run.criteriaVersion;
+        line['Processed At'] = U.fmtDateTime(run.completedAt);
+        rows.push(line);
+      });
+    });
+    return { columns: cols.concat(meta), rows: rows, run: run };
+  }
+
   /* ------------------------------------------------------------
      Demo bootstrap — builds the catalogue at the documented stages
      ------------------------------------------------------------ */
@@ -1225,6 +1529,7 @@
 
   /** Build a seeded analytic up to its documented workflow stage. */
   function hydrateStage(a, spec) {
+    if (spec.stage === 'lisa') { hydrateLisa(a, spec); return; }
     if (spec.stage === 'draft') {
       a.status = 'draft';
       pushAudit(a, daysAgo(21, 10, 5), { action: 'Analytic created', detail: a.name + ' (' + a.code + ')', kind: 'info' });
@@ -1435,6 +1740,101 @@
     });
   }
 
+  /**
+   * A LISA analyte: several run files for the same assay, analyte configuration,
+   * LISA sample-stream patterns and the criteria module ready to execute.
+   */
+  function hydrateLisa(a, spec) {
+    Object.assign(assayOf(a), spec.assay || {});
+    a.files = spec.lisa.files.map(function (fs, i) {
+      var ds = Seed.generateLisaFile(spec.lisa, spec.seedNo + i * 23, fs);
+      return {
+        id: 'seedfile_' + a.id + '_' + i, name: fs.name,
+        size: ds.rows.length * ds.columns.length * 9 + 600, type: 'text/csv',
+        uploadedAt: daysAgo(4 - i, 8, 30 + i * 12), columns: ds.columns, records: ds.rows,
+        recordCount: ds.rows.length, columnCount: ds.columns.length, simulated: false,
+        seedPart: { lisaFile: fs.name }
+      };
+    });
+    refreshFields(a);
+    pushAudit(a, daysAgo(30, 9, 0), { action: 'Analytic created', detail: a.name + ' (' + a.code + ')', kind: 'info' });
+    pushAudit(a, daysAgo(30, 9, 12), {
+      action: 'Analyte configuration saved',
+      detail: describeAssay(assayOf(a)), kind: 'info'
+    });
+    a.files.forEach(function (f, i) {
+      pushAudit(a, f.uploadedAt, {
+        action: 'Data file uploaded',
+        detail: f.name + ' — ' + U.fmtInt(f.recordCount) + ' records, ' + f.columnCount + ' columns', kind: 'info'
+      });
+    });
+
+    /* analytics scope — the files carry one analyte */
+    var det = detectAnalytes(a);
+    a.analyteScope = det
+      ? { field: det.field, values: det.options.map(function (o) { return o.value; }), applied: true, detected: det.options }
+      : { field: '', values: [], applied: true, detected: [] };
+
+    /* LISA sample-stream patterns */
+    var pat = suggestPatterns(a);
+    if (pat) {
+      a.classification = {
+        mode: 'patterns', applied: true, idField: pat.idField, typeField: pat.typeField,
+        field: pat.typeField, suggested: null, counts: null,
+        control: '', calibration: '', patient: '',
+        patterns: { calibrator: pat.calibrator, control: pat.control, patient: pat.patient }
+      };
+      a.classification.counts = counts(a);
+      pushAudit(a, daysAgo(30, 9, 20), {
+        action: 'Sample classification applied',
+        detail: 'LISA pattern rules — calibrators Cal_n / Standard, controls WSC*/UC / Control, patients numeric / Unknown',
+        kind: 'info'
+      });
+    }
+
+    a.selectedFields = fieldNames(a).filter(function (f) { return f !== a.analyteScope.field; });
+    criteriaOf(a);
+    columnMapOf(a);
+    a.processing = { runs: {} };
+    a.status = 'draft';
+    pushAudit(a, daysAgo(30, 9, 26), {
+      action: 'Criteria module configured',
+      detail: a.criteria.length + ' criteria enabled at defaults · criteria v' + a.assay.criteriaVersion, kind: 'info'
+    });
+  }
+
+  /** Criteria-level QC gate: calibrator + control criteria must pass. */
+  function criteriaQCStatus(a) {
+    var out = {
+      processedFiles: 0, totalFiles: (a.files || []).length,
+      calibrator: { total: 0, failed: 0 }, control: { total: 0, failed: 0 },
+      patient: { total: 0, failed: 0, warnings: 0 },
+      stale: 0, passed: false, ran: false
+    };
+    var runs = (a.processing && a.processing.runs) || {};
+    Object.keys(runs).forEach(function (fid) {
+      var run = runs[fid];
+      if (run.status === 'stale') out.stale++;
+      if (run.status !== 'completed') return;
+      out.processedFiles++;
+      out.ran = true;
+      out.calibrator.total += run.counts.calibrator;
+      out.control.total += run.counts.control;
+      out.patient.total += run.counts.patient;
+      (run.rows || []).forEach(function (r) {
+        var stream = (r.failures[0] || r.warnings[0] || {}).stream;
+        if (r.status === 'fail') {
+          if (stream === 'calibrator') out.calibrator.failed++;
+          else if (stream === 'control') out.control.failed++;
+          else out.patient.failed++;
+        } else if (r.status === 'warning' && stream === 'patient') out.patient.warnings++;
+      });
+    });
+    out.passed = out.ran && out.calibrator.failed === 0 && out.control.failed === 0 &&
+      out.processedFiles === out.totalFiles && out.stale === 0;
+    return out;
+  }
+
   function runQCValidationQuiet(a, ts) {
     var g = groups(a), ctx = ctxOf(a), rules = activeRules(a);
     var ctl = Rules.runSet(g.control, 'control', rules, ctx);
@@ -1551,6 +1951,14 @@
     setSelectedFields: setSelectedFields, activeRules: activeRules,
     detectAnalytes: detectAnalytes, analyticsByFile: analyticsByFile, applyAnalyteScope: applyAnalyteScope,
     failedRecords: failedRecords, failedFileName: failedFileName, FAIL_META: FAIL_META,
+    /* LISA */
+    assayOf: assayOf, criteriaOf: criteriaOf, columnMapOf: columnMapOf, criteriaContext: criteriaContext,
+    saveAssayConfig: saveAssayConfig, saveCriterion: saveCriterion, setColumnRole: setColumnRole,
+    describeAssay: describeAssay, invalidateProcessing: invalidateProcessing,
+    runOf: runOf, processFile: processFile, processAllFiles: processAllFiles, testCriteria: testCriteria,
+    criteriaQCStatus: criteriaQCStatus,
+    passedOutput: passedOutput, exceptionsOutput: exceptionsOutput,
+    suggestPatterns: suggestPatterns, applyPatternClassification: applyPatternClassification,
     stateOf: stateOf, stepStates: stepStates, statusOf: statusOf,
     validationPassed: validationPassed, patientUnlocked: patientUnlocked,
     applyClassification: applyClassification,

@@ -125,6 +125,132 @@
   ];
 
   /* ------------------------------------------------------------
+     LISA demo analyte — LC-MS/MS confirmation batch.
+     Column shape follows a real instrument export, including "----" for
+     "no result" and repeated Sample IDs across runs.
+     ------------------------------------------------------------ */
+  var LISA_COLUMNS = ['Analyte Name', 'Flags', 'Data Filename', 'Sample ID', 'Sample Type', 'Level',
+    'Area', 'ISTD Area', 'Found RT', 'Ref 1 Set Ratio', 'Ref 1 Actual Ratio', 'Cal Point',
+    'Std. Conc. (ng/mL)', 'Conc. (ng/mL)', '%Diff', 'S/N', 'Acquired Date', 'Sample Name', 'Width(50%)'];
+
+  var LISA_CATALOG = [
+    {
+      id: 'COC008', name: 'Cocaine', code: 'COC',
+      description: 'Cocaine confirmation by LC-MS/MS — 7-point calibration with WSC controls and patient specimens.',
+      color: '#B3261E', stage: 'lisa', version: '1.0', seedNo: 8091,
+      assay: {
+        analyteName: 'Cocaine', analyteCode: 'COC', assayName: 'Cocaine Confirmation (LC-MS/MS)',
+        matrix: 'Urine', referenceRatioAdjustment: 10, cutoffMode: 'wcs1', cutoffSampleId: 'WCS1'
+      },
+      lisa: {
+        analyte: 'Cocaine', batch: '260629_P300',
+        calLevels: [1, 2, 5, 10, 20, 40, 100],
+        controls: [['WCS1', 1.5], ['WCS2', 2.5], ['WCS3', 50], ['UC', null]],
+        rt: 4.35, setRatio: 30, ratioBase: [23.1, 35.6],
+        files: [
+          { name: 'Cocaine_2026_08_01.csv', day: 0, patients: 118, calFail: -1, ctlFail: [], idBase: 2606251000 },
+          { name: 'Cocaine_2026_08_02.csv', day: 1, patients: 164, calFail: 3, ctlFail: [0], idBase: 2606252000 },
+          { name: 'Cocaine_2026_08_03.csv', day: 2, patients: 97, calFail: -1, ctlFail: [1], idBase: 2606253000 },
+          { name: 'Cocaine_2026_08_04.csv', day: 3, patients: 141, calFail: -1, ctlFail: [], idBase: 2606254000 }
+        ]
+      }
+    }
+  ];
+
+  function generateLisaFile(spec, seedNo, fileSpec) {
+    var rnd = Uu.seededRandom(seedNo || 8091);
+    var L = spec;
+    var rows = [];
+    var base = new Date(2026, 7, 1 + (fileSpec.day || 0), 12, 20, 0);
+    var clock = base.getTime();
+    function stamp() {
+      clock += 386000;                       // ~6.4 min per injection
+      var d = new Date(clock);
+      var h = d.getHours(), ap = h >= 12 ? 'PM' : 'AM';
+      var h12 = h % 12 === 0 ? 12 : h % 12;
+      return (d.getMonth() + 1) + '/' + d.getDate() + '/' + d.getFullYear() + ' ' +
+        h12 + ':' + pad(d.getMinutes(), 2) + ':' + pad(d.getSeconds(), 2) + ' ' + ap;
+    }
+    function jit(v, p) { return v * (1 + (rnd() * 2 - 1) * p); }
+    var seq = 0;
+    function fname(id) { seq += 1; return L.batch + '_' + fileSpec.name.replace(/\.csv$/i, '') + '_' + id + '_' + pad(seq, 3); }
+    function ratio() { return jit((L.ratioBase[0] + L.ratioBase[1]) / 2, 0.16); }
+
+    /* calibrators Cal_1 … Cal_7 (Sample Type "Standard") */
+    L.calLevels.forEach(function (level, i) {
+      var diff = (rnd() * 2 - 1) * 12;
+      if (fileSpec.calFail === i) diff = 27.4 + rnd() * 6;      // deliberate accuracy failure
+      var conc = level * (1 + diff / 100);
+      rows.push({
+        'Analyte Name': L.analyte, 'Flags': '', 'Data Filename': fname('Cal_' + (i + 1)),
+        'Sample ID': 'Cal_' + (i + 1), 'Sample Type': 'Standard', 'Level': String(i + 1),
+        'Area': Math.round(jit(3800 * Math.pow(level, 0.98), 0.05)),
+        'ISTD Area': Math.round(jit(18000000, 0.12)),
+        'Found RT': jit(L.rt, 0.004).toFixed(3),
+        'Ref 1 Set Ratio': String(L.setRatio), 'Ref 1 Actual Ratio': ratio().toFixed(2),
+        'Cal Point': 'Yes', 'Std. Conc. (ng/mL)': String(level),
+        'Conc. (ng/mL)': conc.toFixed(4), '%Diff': diff.toFixed(2),
+        'S/N': '----', 'Acquired Date': stamp(), 'Sample Name': 'Cal_' + (i + 1),
+        'Width(50%)': jit(0.055, 0.1).toFixed(3)
+      });
+    });
+
+    /* controls WCS1 … UC (Sample Type "Control") */
+    L.controls.forEach(function (c, i) {
+      var target = c[1];
+      var diff = (rnd() * 2 - 1) * 14;
+      if ((fileSpec.ctlFail || []).indexOf(i) > -1) diff = 31 + rnd() * 60;   // deliberate control failure
+      var conc = target === null ? jit(0.68, 0.2) : target * (1 + diff / 100);
+      rows.push({
+        'Analyte Name': L.analyte, 'Flags': '', 'Data Filename': fname(c[0]),
+        'Sample ID': c[0], 'Sample Type': 'Control', 'Level': String(8 + i),
+        'Area': Math.round(jit(target === null ? 1750 : 6800 * (target / 1.5), 0.08)),
+        'ISTD Area': Math.round(jit(13000000, 0.15)),
+        'Found RT': jit(L.rt, 0.006).toFixed(3),
+        'Ref 1 Set Ratio': String(L.setRatio), 'Ref 1 Actual Ratio': ratio().toFixed(2),
+        'Cal Point': 'No',
+        'Std. Conc. (ng/mL)': target === null ? '----' : String(target),
+        'Conc. (ng/mL)': conc.toFixed(4),
+        '%Diff': target === null ? '----' : diff.toFixed(2),
+        'S/N': '----', 'Acquired Date': stamp(), 'Sample Name': c[0],
+        'Width(50%)': jit(0.055, 0.1).toFixed(3)
+      });
+    });
+
+    /* patient specimens — numeric Sample ID, Sample Type "Unknown" */
+    var n = fileSpec.patients;
+    for (var p = 0; p < n; p++) {
+      var kind = rnd();
+      var id = String(fileSpec.idBase + p + 1);
+      var missingIstd = kind < 0.04;
+      var suppressed = !missingIstd && kind < 0.09;
+      var wildRatio = !missingIstd && kind >= 0.09 && kind < 0.145;
+      var rtDrift = !missingIstd && kind >= 0.145 && kind < 0.18;
+      var overRange = kind >= 0.18 && kind < 0.205;
+      var belowCut = kind >= 0.205 && kind < 0.42;
+
+      var conc = belowCut ? rnd() * 1.45
+        : overRange ? 105 + rnd() * 260
+          : 1.6 + rnd() * 85;
+      rows.push({
+        'Analyte Name': L.analyte, 'Flags': '', 'Data Filename': fname(id),
+        'Sample ID': id, 'Sample Type': 'Unknown', 'Level': '----',
+        'Area': missingIstd ? '----' : Math.round(jit(1600 + conc * 3400, 0.1)),
+        'ISTD Area': missingIstd ? '----' : Math.round(suppressed ? jit(4200000, 0.1) : jit(15000000, 0.13)),
+        'Found RT': rtDrift ? jit(L.rt * 1.28, 0.02).toFixed(3) : jit(L.rt, 0.012).toFixed(3),
+        'Ref 1 Set Ratio': String(L.setRatio),
+        'Ref 1 Actual Ratio': wildRatio ? (rnd() < 0.5 ? (rnd() * 6).toFixed(2) : (240 + rnd() * 2100).toFixed(2))
+          : ratio().toFixed(2),
+        'Cal Point': 'No', 'Std. Conc. (ng/mL)': '----',
+        'Conc. (ng/mL)': missingIstd ? '----' : conc.toFixed(4),
+        '%Diff': '----', 'S/N': '----', 'Acquired Date': stamp(), 'Sample Name': id,
+        'Width(50%)': jit(0.065, 0.18).toFixed(3)
+      });
+    }
+    return { columns: LISA_COLUMNS.slice(), rows: rows };
+  }
+
+  /* ------------------------------------------------------------
      Deterministic dataset generator.
      Produces ONE file containing control + calibration + patient rows.
      ------------------------------------------------------------ */
@@ -490,7 +616,9 @@
   }
 
   var API = {
-    CATALOG: CATALOG, COLUMNS: COLUMNS,
+    CATALOG: CATALOG.concat(LISA_CATALOG), COLUMNS: COLUMNS,
+    LISA_CATALOG: LISA_CATALOG, LISA_COLUMNS: LISA_COLUMNS,
+    generateLisaFile: generateLisaFile,
     generateDataset: generateDataset,
     suggestClassification: suggestClassification,
     suggestRules: suggestRules,

@@ -120,6 +120,9 @@
       case 'analytics': return Screens.analyticsStep(a);
       case 'mapping': return Screens.mapping(a);
       case 'fields': return Screens.fields(a);
+      case 'criteria': return Screens.criteria(a);
+      case 'config': return Screens.analyteConfig(a);
+      case 'processing': return Screens.processing(a, current.params);
       case 'rules': return Screens.rules(a);
       case 'validation': return Screens.validation(a);
       case 'approval': return Screens.approval(a);
@@ -133,6 +136,7 @@
     var map = {
       overview: 'Overview', upload: 'Upload Files', preview: 'File Preview',
       analytics: 'Analytics', mapping: 'Sample Types', fields: 'Fields',
+      criteria: 'Criteria Module', config: 'Analyte Configuration', processing: 'Processing',
       rules: 'Rules', validation: 'QC Validation', approval: 'Approval',
       patient: 'Patient Testing', results: 'Results', history: 'Validation History'
     };
@@ -270,12 +274,12 @@
   function showAuth() {
     U.$('#auth-screen').hidden = false;
     U.$('#app-shell').hidden = true;
-    document.title = 'Sign in · ANALYTIX';
+    document.title = 'Sign in · LISA';
   }
   function showApp() {
     U.$('#auth-screen').hidden = true;
     U.$('#app-shell').hidden = false;
-    document.title = 'ANALYTIX — Laboratory Analytics Validation';
+    document.title = 'LISA — Laboratory Information System Analysis';
   }
 
   function initLogin() {
