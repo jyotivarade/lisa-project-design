@@ -31,6 +31,7 @@
     { key: 'upload', label: 'Upload Files', hint: 'One or many data files' },
     { key: 'analytics', label: 'Analytics', hint: 'Analytics found in the files' },
     { key: 'mapping', label: 'Sample Types', hint: 'Calibrators / controls / patients' },
+    { key: 'samples', label: 'Sample Selection', hint: 'Confirm the records in each stream' },
     { key: 'criteria', label: 'Criteria', hint: 'LISA criteria module' },
     { key: 'fields', label: 'Fields', hint: 'Fields used for validation' },
     { key: 'rules', label: 'Rules', hint: 'Validation configuration' },
@@ -114,6 +115,8 @@
         a.files = a.files || [];
         a.analyteScope = a.analyteScope || { field: '', values: [], applied: false, detected: [] };
         a.selectedFields = a.selectedFields || [];
+        a.sampleOverrides = a.sampleOverrides || {};
+        a.streamTests = a.streamTests || null;
         return a;
       });
       // restore record sets for anything derived from the demo generator
@@ -125,6 +128,8 @@
           a.classification = { field: '', control: '', calibration: '', patient: '', applied: false, counts: null, suggested: null };
           a.analyteScope = { field: '', values: [], applied: false, detected: [] };
           a.selectedFields = []; a.rules = a.rules || [];
+          a.sampleOverrides = {};      // row keys no longer resolve without the rows
+          a.streamTests = null;
         }
         invalidateMergeCache(a);
       });
@@ -165,6 +170,8 @@
         mode: 'values',          // 'values' | 'patterns' (LISA Sample ID + Sample Type rules)
         patterns: null
       },
+      sampleOverrides: {},       // "fileId:rowIndex" → stream — the user's manual selection
+      streamTests: null,         // last Test Calibration / Test Controls dry run
       /* --- LISA analyte / assay configuration --- */
       assay: {
         analyteName: '', analyteCode: '', assayName: '', matrix: '',
@@ -311,8 +318,127 @@
     });
   }
 
-  /** Split the in-scope records by the user's sample-type classification. */
+  /* ------------------------------------------------------------
+     Manual sample selection
+     Detection (values or LISA patterns) only proposes the split. The user
+     owns the final answer: `sampleOverrides` pins individual rows to a
+     stream and is layered on top of whatever detection produced. An entry
+     is dropped as soon as it agrees with detection again, so the map stays
+     small and re-detection keeps working for everything untouched.
+     ------------------------------------------------------------ */
+  var STREAM_KEYS = ['calibration', 'control', 'patient', 'unmatched'];
+
+  /** Stable identity for a row across reloads: its file + its index in that file. */
+  function rowKey(rec) { return rec.__fid + ':' + rec.__row; }
+
+  function overridesOf(a) {
+    a.sampleOverrides = a.sampleOverrides || {};
+    return a.sampleOverrides;
+  }
+  function hasOverrides(a) { return Object.keys(overridesOf(a)).length > 0; }
+
+  /** The stream detection alone would assign a row to. */
+  function baseStreamOf(a) {
+    var g = baseGroups(a);
+    var index = {};
+    STREAM_KEYS.forEach(function (k) {
+      g[k].forEach(function (r) { index[rowKey(r)] = k; });
+    });
+    return function (rec) { return index[rowKey(rec)] || 'unmatched'; };
+  }
+
+  /** Detected split, then the user's per-row pins applied on top. */
   function groups(a) {
+    var base = baseGroups(a);
+    var ov = a.sampleOverrides;
+    if (!ov || !Object.keys(ov).length) return base;
+    var out = { control: [], calibration: [], patient: [], unmatched: [] };
+    STREAM_KEYS.forEach(function (k) {
+      base[k].forEach(function (r) {
+        var target = ov[rowKey(r)];
+        out[out[target] ? target : k].push(r);
+      });
+    });
+    return out;
+  }
+
+  /**
+   * Pin records to a stream. Passing the stream detection already chose simply
+   * clears the pin. Selection is part of the validated configuration, so a
+   * change re-versions the analyte and re-locks patient testing.
+   */
+  function setSampleStream(a, recs, stream, reason) {
+    if (STREAM_KEYS.indexOf(stream) === -1) return 0;
+    var ov = overridesOf(a);
+    var base = baseStreamOf(a);
+    var changed = 0;
+    (recs || []).forEach(function (r) {
+      var key = rowKey(r);
+      if (base(r) === stream) {
+        if (ov[key] !== undefined) { delete ov[key]; changed++; }
+      } else if (ov[key] !== stream) {
+        ov[key] = stream; changed++;
+      }
+    });
+    if (changed) afterSelectionChange(a, changed + ' record(s) assigned to ' + streamLabel(stream), reason);
+    return changed;
+  }
+
+  /** Drop every manual pin, returning the split to pure detection. */
+  function resetSampleSelection(a, reason) {
+    if (!hasOverrides(a)) return 0;
+    var n = Object.keys(overridesOf(a)).length;
+    a.sampleOverrides = {};
+    afterSelectionChange(a, 'Manual sample selection cleared — ' + n + ' pinned record(s) returned to detection', reason);
+    return n;
+  }
+
+  function streamLabel(s) {
+    return { calibration: 'Calibration', control: 'Control', patient: 'Patient', unmatched: 'Excluded' }[s] || s;
+  }
+
+  function afterSelectionChange(a, detail, reason) {
+    var c = counts(a);
+    audit(a, {
+      action: 'Sample selection changed', detail: detail,
+      next: c.calibration + ' calibration · ' + c.control + ' control · ' + c.patient + ' patient',
+      reason: reason || '', kind: 'warn'
+    });
+    a.classification.counts = c;
+    a.streamTests = null;                       // previous Test Calibration / Test Controls no longer apply
+    var assay = assayOf(a);
+    assay.criteriaVersion = bumpVersion(assay.criteriaVersion);
+    invalidateProcessing(a, 'Sample selection changed');
+    invalidateApproval(a, 'Sample selection changed');
+    touch(a);
+  }
+
+  /** Per-stream counts plus the sample IDs behind them, for the summary cards. */
+  function sampleSelectionSummary(a) {
+    var g = groups(a);
+    var idCol = columnMapOf(a).sampleId;
+    var base = baseStreamOf(a);
+    var ov = a.sampleOverrides || {};
+    function describeStream(key, list) {
+      return {
+        stream: key, count: list.length,
+        ids: list.map(function (r) { return idCol ? String(r[idCol]) : 'Row ' + (r.__row + 1); }),
+        added: list.filter(function (r) { return ov[rowKey(r)] && base(r) !== key; }).length,
+        records: list
+      };
+    }
+    return {
+      calibration: describeStream('calibration', g.calibration),
+      control: describeStream('control', g.control),
+      patient: describeStream('patient', g.patient),
+      unmatched: describeStream('unmatched', g.unmatched),
+      manual: Object.keys(ov).length,
+      idColumn: idCol || null
+    };
+  }
+
+  /** Split the in-scope records by the user's sample-type classification. */
+  function baseGroups(a) {
     var recs = scopedRecords(a);
     var c = a.classification;
     var out = { control: [], calibration: [], patient: [], unmatched: [] };
@@ -600,6 +726,13 @@
     out.upload = hasData(a) ? 'done' : 'current';
     out.analytics = !hasData(a) ? 'pending' : (a.analyteScope.applied ? 'done' : 'current');
     out.mapping = !a.analyteScope.applied ? 'pending' : (a.classification.applied ? 'done' : 'current');
+    if (!a.classification.applied) out.samples = 'pending';
+    else {
+      var gate = streamGate(a);
+      out.samples = (gate.calibration.state === 'failed' || gate.control.state === 'failed') ? 'failed'
+        : (gate.calibration.state === 'passed' && gate.control.state === 'passed') ? 'done'
+          : 'current';
+    }
     var qc = criteriaQCStatus(a);
     out.criteria = !a.classification.applied ? 'pending'
       : (qc.ran && qc.stale === 0 ? (qc.passed ? 'done' : 'failed') : 'current');
@@ -1434,6 +1567,96 @@
     return { runs: runs, summary: a.processing.summary };
   }
 
+  /**
+   * Test ONE sample stream against the criteria — the "Test Calibration" /
+   * "Test Controls" preview. Only the chosen stream's rows are evaluated, but
+   * the derived values still come from the whole file (the ion-ratio range and
+   * RT window are established by the calibrators regardless of what is tested).
+   * The result is kept on the analytic so the QC gate can read it.
+   */
+  function testStream(a, stream, fileId) {
+    var key = stream === 'calibration' ? 'calibrator' : stream;
+    var ctx = criteriaContext(a, fileId);
+    var rows = ctx.streams[key] || [];
+    var res = Criteria.process(rows, streamOfRow(a), criteriaOf(a), ctx);
+    var recs = recordsOf(a);
+    var idCol = ctx.map.sampleId;
+
+    var failures = [];
+    res.rows.forEach(function (r) {
+      (r.failures || []).concat(r.warnings || []).forEach(function (f) {
+        var rec = recs[r.row.__i] || {};
+        failures.push({
+          i: r.row.__i,
+          sampleId: idCol ? String(rec[idCol]) : 'Row ' + (r.row.__row + 1),
+          src: r.row.__src, field: f.column, actual: f.actual,
+          min: f.min, max: f.max, expected: f.expected,
+          rule: f.name, criterion: f.criterion, reason: f.reason,
+          severity: (r.failures || []).indexOf(f) > -1 ? 'fail' : 'warning'
+        });
+      });
+    });
+
+    var summary = {
+      stream: stream, streamKey: key,
+      total: res.total, passed: res.passed, failed: res.failed, warnings: res.warnings,
+      failures: failures, derived: ctx.derived,
+      criteriaVersion: assayOf(a).criteriaVersion,
+      fileId: fileId || null, ranAt: new Date().toISOString()
+    };
+    a.streamTests = a.streamTests || {};
+    a.streamTests[stream] = summary;
+    audit(a, {
+      action: 'Test ' + (stream === 'calibration' ? 'Calibration' : 'Controls') + ' run',
+      detail: U.fmtInt(res.total) + ' ' + stream + ' record(s) — ' + U.fmtInt(res.passed) +
+        ' passed, ' + U.fmtInt(res.failed) + ' failed · criteria v' + summary.criteriaVersion,
+      kind: res.failed ? 'bad' : 'ok'
+    });
+    touch(a);
+    return summary;
+  }
+
+  /**
+   * The patient-testing gate (§15/§16): calibration and control must both have
+   * been tested and passed on the CURRENT criteria version before patient
+   * validation can start.
+   */
+  function streamGate(a) {
+    var t = a.streamTests || {};
+    var g = groups(a);
+    /* read-only: the stepper calls this on every render, so nothing is lazily
+       initialised here the way assayOf()/criteriaOf() would */
+    var version = (a.assay && a.assay.criteriaVersion) || '1.0';
+    function stateFor(key, present) {
+      var r = t[key];
+      if (!present) return { state: 'none', label: 'No records', total: 0, failed: 0 };
+      if (!r) return { state: 'untested', label: 'Not tested', total: present, failed: 0 };
+      if (r.criteriaVersion !== version) {
+        return { state: 'stale', label: 'Re-test required', total: r.total, failed: r.failed };
+      }
+      return {
+        state: r.failed ? 'failed' : 'passed', label: r.failed ? 'FAILED' : 'PASSED',
+        total: r.total, failed: r.failed, ranAt: r.ranAt
+      };
+    }
+    var cal = stateFor('calibration', g.calibration.length);
+    var ctl = stateFor('control', g.control.length);
+    var blockers = [];
+    if (cal.state === 'failed') blockers.push('Calibration validation failed');
+    if (ctl.state === 'failed') blockers.push('Control validation failed');
+    if (cal.state === 'untested' || ctl.state === 'untested') blockers.push('Calibration and controls have not been tested');
+    if (cal.state === 'stale' || ctl.state === 'stale') blockers.push('Criteria changed since the last QC test');
+    if (!activeCriteriaCount(a)) blockers.push('No criteria are enabled');
+    if (!a.validation.approved) blockers.push('Validation has not been approved');
+    return {
+      calibration: cal, control: ctl, blockers: blockers,
+      unlocked: blockers.length === 0, patientCount: g.patient.length
+    };
+  }
+  function activeCriteriaCount(a) {
+    return (a.criteria || []).filter(function (c) { return c.enabled; }).length;
+  }
+
   /** Dry run used by "Test Criteria" — nothing is stored. */
   function testCriteria(a, fileId) {
     var ctx = criteriaContext(a, fileId);
@@ -1946,7 +2169,12 @@
     addFiles: addFiles, removeFileById: removeFileById, filesOf: filesOf, hasData: hasData,
     columnsOf: columnsOf, refreshFields: refreshFields, sourceRecord: sourceRecord,
     recordsOf: recordsOf, scopedRecords: scopedRecords, fieldNames: fieldNames, ctxOf: ctxOf,
-    groups: groups, counts: counts,
+    groups: groups, baseGroups: baseGroups, counts: counts,
+    /* manual sample selection */
+    rowKey: rowKey, baseStreamOf: baseStreamOf, setSampleStream: setSampleStream,
+    resetSampleSelection: resetSampleSelection, sampleSelectionSummary: sampleSelectionSummary,
+    hasOverrides: hasOverrides, streamLabel: streamLabel, STREAM_KEYS: STREAM_KEYS,
+    testStream: testStream, streamGate: streamGate,
     selectedFields: selectedFields, fieldsConfirmed: fieldsConfirmed, isFieldSelected: isFieldSelected,
     setSelectedFields: setSelectedFields, activeRules: activeRules,
     detectAnalytes: detectAnalytes, analyticsByFile: analyticsByFile, applyAnalyteScope: applyAnalyteScope,

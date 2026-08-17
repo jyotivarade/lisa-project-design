@@ -334,9 +334,10 @@
           m.close();
           UI.toast({
             kind: 'success', title: 'Classification applied',
-            text: U.fmtInt(t.calibrator) + ' calibrators · ' + U.fmtInt(t.control) + ' controls · ' + U.fmtInt(t.patient) + ' patient samples.'
+            text: U.fmtInt(t.calibrator) + ' calibrators · ' + U.fmtInt(t.control) + ' controls · ' + U.fmtInt(t.patient) +
+              ' patient samples. Confirm the individual records next.'
           });
-          App.go('analytic/' + a.id + '/criteria');
+          App.go('analytic/' + a.id + '/samples');
         }, { icon: 'check' })
       ]
     });
@@ -365,7 +366,7 @@
       badge: '<span class="badge badge-info">LISA patterns on [' + esc(c.idField || '—') + '] / [' + esc(c.typeField || '—') + ']</span>',
       actions: [
         UI.btn('Edit patterns', 'btn-secondary btn-sm', function () { Screens.patternClassification(a); }, { icon: 'edit', iconSize: 14 }),
-        UI.btn('Criteria Module', 'btn-primary btn-sm', function () { App.go('analytic/' + a.id + '/criteria'); }, { icon: 'arrowRight', iconSize: 14 })
+        UI.btn('Select Records', 'btn-primary btn-sm', function () { App.go('analytic/' + a.id + '/samples'); }, { icon: 'arrowRight', iconSize: 14 })
       ],
       flush: true, body: rows
     });

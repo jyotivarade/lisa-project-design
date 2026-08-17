@@ -83,11 +83,13 @@
         if (!col) return skip('Column for % Diff is not mapped');
         var raw = row[col];
         if (U.isBlank(raw)) return skip('No % Diff reported');
-        var v = Math.abs(U.toNumber(raw));
-        if (isNaN(v)) return fail('% Diff "' + raw + '" is not numeric', col);
+        var signed = U.toNumber(raw);
+        var v = Math.abs(signed);
+        var band = { actual: signed, min: -cfg.threshold, max: cfg.threshold };
+        if (isNaN(v)) return fail('% Diff "' + raw + '" is not numeric', col, { actual: raw, expected: 'numeric value' });
         return flagged(v, cfg.operator, cfg.threshold)
           ? fail('Calibrator accuracy ' + U.fmtNum(v, 2) + '% is ' + op(cfg.operator).label.toLowerCase() +
-                 ' the ' + cfg.threshold + '% tolerance', col)
+                 ' the ' + cfg.threshold + '% tolerance', col, band)
           : pass();
       }
     },
@@ -103,11 +105,13 @@
         if (!col) return skip('Column for % Diff is not mapped');
         var raw = row[col];
         if (U.isBlank(raw)) return skip('No % Diff reported');
-        var v = Math.abs(U.toNumber(raw));
-        if (isNaN(v)) return fail('% Diff "' + raw + '" is not numeric', col);
+        var signed = U.toNumber(raw);
+        var v = Math.abs(signed);
+        var band = { actual: signed, min: -cfg.threshold, max: cfg.threshold };
+        if (isNaN(v)) return fail('% Diff "' + raw + '" is not numeric', col, { actual: raw, expected: 'numeric value' });
         return flagged(v, cfg.operator, cfg.threshold)
           ? fail('Control accuracy ' + U.fmtNum(v, 2) + '% is ' + op(cfg.operator).label.toLowerCase() +
-                 ' the ' + cfg.threshold + '% tolerance', col)
+                 ' the ' + cfg.threshold + '% tolerance', col, band)
           : pass();
       }
     },
@@ -126,8 +130,8 @@
         if (!col) return skip('Column for ISTD Area is not mapped');
         if (cfg.checkMissing !== false) {
           var raw = row[col];
-          if (U.isBlank(raw)) return fail('Internal standard is missing — no peak reported', col);
-          if (isNaN(U.toNumber(raw))) return fail('Internal standard area "' + raw + '" is not a peak area', col);
+          if (U.isBlank(raw)) return fail('Internal standard is missing — no peak reported', col, { actual: '—', expected: 'peak present' });
+          if (isNaN(U.toNumber(raw))) return fail('Internal standard area "' + raw + '" is not a peak area', col, { actual: raw, expected: 'peak present' });
         }
         if (cfg.checkSuppression !== false) {
           var recCol = ctx.map.recovery, avgCol = ctx.map.avgRecovery;
@@ -143,7 +147,8 @@
             var ratio = rec / avg * 100;
             if (flagged(ratio, cfg.operator, cfg.threshold)) {
               return fail('Internal standard suppressed — recovery ratio ' + U.fmtNum(ratio, 1) + '% is ' +
-                op(cfg.operator).label.toLowerCase() + ' the ' + cfg.threshold + '% threshold', col);
+                op(cfg.operator).label.toLowerCase() + ' the ' + cfg.threshold + '% threshold', col,
+                { actual: U.fmtNum(ratio, 1) + '%', min: cfg.threshold });
             }
           }
         }
@@ -166,10 +171,10 @@
         var raw = row[col];
         if (U.isBlank(raw)) return skip('No concentration reported');
         var v = U.toNumber(raw);
-        if (isNaN(v)) return fail('Concentration "' + raw + '" is not numeric', col);
+        if (isNaN(v)) return fail('Concentration "' + raw + '" is not numeric', col, { actual: raw, expected: 'numeric value' });
         if (flagged(v, cfg.operator, cut)) {
           return transform(col, 0, 'Concentration ' + U.fmtNum(v, 4) + ' is below the ' +
-            U.fmtNum(cut, 4) + ' ng/mL cut-off — reported as 0');
+            U.fmtNum(cut, 4) + ' ng/mL cut-off — reported as 0', { actual: v, min: cut });
         }
         return pass();
       }
@@ -190,10 +195,11 @@
         var raw = row[col];
         if (U.isBlank(raw)) return skip('No ion ratio reported');
         var v = U.toNumber(raw);
-        if (isNaN(v)) return fail('Ion ratio "' + raw + '" is not numeric', col);
+        if (isNaN(v)) return fail('Ion ratio "' + raw + '" is not numeric', col, { actual: raw, expected: 'numeric value' });
         if (v < range[0] || v > range[1]) {
           var res = fail('Ion ratio ' + U.fmtNum(v, 2) + ' is outside the acceptable range ' +
-            U.fmtNum(range[0], 2) + ' – ' + U.fmtNum(range[1], 2), col);
+            U.fmtNum(range[0], 2) + ' – ' + U.fmtNum(range[1], 2), col,
+            { actual: v, min: range[0], max: range[1] });
           if (cfg.zeroToCutoff !== false && ctx.map.concentration) {
             res.transforms = [{ column: ctx.map.concentration, value: 0, note: 'Non-conforming ion ratio — concentration reported as 0' }];
           }
@@ -218,11 +224,12 @@
         var raw = row[col];
         if (U.isBlank(raw)) return skip('No retention time reported');
         var v = U.toNumber(raw);
-        if (isNaN(v)) return fail('Retention time "' + raw + '" is not numeric', col);
+        if (isNaN(v)) return fail('Retention time "' + raw + '" is not numeric', col, { actual: raw, expected: 'numeric value' });
         return (v < win[0] || v > win[1])
           ? fail('Retention time ' + U.fmtNum(v, 3) + ' is outside the acceptable window ' +
                  U.fmtNum(win[0], 3) + ' – ' + U.fmtNum(win[1], 3) +
-                 ' (average ' + U.fmtNum(ctx.derived.rtAverage, 3) + ' ± ' + ctx.derived.rtWindowPct + '%)', col)
+                 ' (average ' + U.fmtNum(ctx.derived.rtAverage, 3) + ' ± ' + ctx.derived.rtWindowPct + '%)', col,
+                 { actual: v, min: win[0], max: win[1] })
           : pass();
       }
     },
@@ -244,28 +251,55 @@
         var v = U.toNumber(raw);
         if (isNaN(v)) return skip('Concentration is not numeric');
         if (cfg.ignoreZero !== false && v === 0) return pass();   // already zeroed by the cut-off criterion
+        var calBand = { actual: v, min: range[0], max: range[1] };
         if (v < range[0]) {
           return flag(cfg.severity, 'Result ' + U.fmtNum(v, 4) + ' is below the lowest calibrator (' +
-            U.fmtNum(range[0], 4) + ' ng/mL)', col);
+            U.fmtNum(range[0], 4) + ' ng/mL)', col, calBand);
         }
         if (v > range[1]) {
           return flag(cfg.severity, 'Result ' + U.fmtNum(v, 4) + ' exceeds the highest calibrator (' +
-            U.fmtNum(range[1], 4) + ' ng/mL) — dilution required', col);
+            U.fmtNum(range[1], 4) + ' ng/mL) — N.I. High, dilution required', col,
+            Object.assign({ flagLabel: 'N.I. High' }, calBand));
         }
         return pass();
       }
     }
   ];
 
+  /**
+   * `detail` carries the structured numbers behind a finding so the failed-record
+   * tables can show Actual / Minimum / Maximum as columns instead of prose:
+   *   { actual, min, max, expected }
+   * Any of the four may be omitted when the check is not a range test.
+   */
   function pass() { return { status: 'pass' }; }
   function skip(reason) { return { status: 'skip', reason: reason }; }
-  function fail(reason, column) { return { status: 'fail', reason: reason, column: column }; }
-  function warn(reason, column) { return { status: 'warning', reason: reason, column: column }; }
-  function flag(severity, reason, column) {
-    return severity === 'warning' ? warn(reason, column) : fail(reason, column);
+  function fail(reason, column, detail) {
+    return Object.assign({ status: 'fail', reason: reason, column: column }, detail || {});
   }
-  function transform(column, value, note) {
-    return { status: 'transformed', reason: note, column: column, transforms: [{ column: column, value: value, note: note }] };
+  function warn(reason, column, detail) {
+    return Object.assign({ status: 'warning', reason: reason, column: column }, detail || {});
+  }
+  function flag(severity, reason, column, detail) {
+    return severity === 'warning' ? warn(reason, column, detail) : fail(reason, column, detail);
+  }
+  function transform(column, value, note, detail) {
+    return Object.assign({
+      status: 'transformed', reason: note, column: column,
+      transforms: [{ column: column, value: value, note: note }]
+    }, detail || {});
+  }
+
+  /** Expected-value label for a finding, used by the failed-record tables. */
+  function expectedLabel(d) {
+    if (!d) return '';
+    if (d.expected) return d.expected;
+    var hasMin = d.min !== undefined && d.min !== null && !isNaN(d.min);
+    var hasMax = d.max !== undefined && d.max !== null && !isNaN(d.max);
+    if (hasMin && hasMax) return U.fmtNum(d.min, 4) + ' – ' + U.fmtNum(d.max, 4);
+    if (hasMax) return '≤ ' + U.fmtNum(d.max, 4);
+    if (hasMin) return '≥ ' + U.fmtNum(d.min, 4);
+    return '';
   }
 
   function def(key) { return CATALOG.filter(function (c) { return c.key === key; })[0] || null; }
@@ -435,7 +469,9 @@
         stat.evaluated++;
         var entry = {
           criterion: cfg.key, name: d.name, column: res.column || ctx.map[cfg.role] || '',
-          reason: res.reason || '', stream: stream
+          reason: res.reason || '', stream: stream,
+          actual: res.actual, min: res.min, max: res.max,
+          expected: expectedLabel(res), flagLabel: res.flagLabel || null
         };
         if (res.status === 'fail') { stat.failed++; record.failures.push(entry); }
         else if (res.status === 'warning') { stat.warnings++; record.warnings.push(entry); }
@@ -469,7 +505,7 @@
   global.Criteria = {
     ROLES: ROLES, OPERATORS: OPERATORS, CATALOG: CATALOG,
     autoMap: autoMap, def: def, op: op, roleLabel: roleLabel,
-    defaultConfig: defaultConfig, describe: describe,
+    defaultConfig: defaultConfig, describe: describe, expectedLabel: expectedLabel,
     derive: derive, applyRtWindow: applyRtWindow,
     process: process, appliedRow: appliedRow
   };

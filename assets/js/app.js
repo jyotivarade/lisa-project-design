@@ -119,6 +119,7 @@
       case 'preview': return Screens.preview(a, current.params);
       case 'analytics': return Screens.analyticsStep(a);
       case 'mapping': return Screens.mapping(a);
+      case 'samples': return Screens.samples(a);
       case 'fields': return Screens.fields(a);
       case 'criteria': return Screens.criteria(a);
       case 'config': return Screens.analyteConfig(a);
@@ -135,7 +136,7 @@
   function stepLabel(step) {
     var map = {
       overview: 'Overview', upload: 'Upload Files', preview: 'File Preview',
-      analytics: 'Analytics', mapping: 'Sample Types', fields: 'Fields',
+      analytics: 'Analytics', mapping: 'Sample Types', samples: 'Sample Selection', fields: 'Fields',
       criteria: 'Criteria Module', config: 'Analyte Configuration', processing: 'Processing',
       rules: 'Rules', validation: 'QC Validation', approval: 'Approval',
       patient: 'Patient Testing', results: 'Results', history: 'Validation History'

@@ -22,11 +22,11 @@ Password: Admin@123
 ## LISA workflow (per analyte)
 
 An analyte (e.g. **Cocaine**, code `COC`) owns many run files, its own configuration and its own
-criteria. Inside an analyte the workflow is a 10-step stepper:
+criteria. Inside an analyte the workflow is an 11-step stepper:
 
 ```
-Upload Files → Analytics → Sample Types → Criteria → Fields → Rules
-             → QC Validation → Approval → Patient Testing → Results
+Upload Files → Analytics → Sample Types → Sample Selection → Criteria → Fields
+             → Rules → QC Validation → Approval → Patient Testing → Results
 ```
 
 * **Analyte Configuration** (`Analyte Configuration` button on any analyte screen) — analyte name/code,
@@ -93,22 +93,29 @@ original build. The enhanced flow lives entirely **inside** an analytic — a 9-
    pick which analytics this workflow validates. Records of other analytics are excluded from every run.
 5. **Sample Types** — pick any column as the sample-type field and map its values to
    control / calibration / patient (a mapping is *suggested* from the data, never hardcoded)
-6. **Fields** — choose which detected fields take part in validation, with per-sample-type population
+6. **Sample Selection** — detection only *proposes* the split; here you confirm it record by record.
+   A searchable, filterable table of every in-scope row lets you tick any row into the calibration or
+   control set — `Cal_1…Cal_n` and `WCS1…WCS3` are whatever this file happened to contain, never a rule.
+   Patient records are never picked by hand: whatever is left over *is* the patient set. The same screen
+   carries **Test Calibration** / **Test Controls**, which show Sample ID · Field · Actual · Minimum ·
+   Maximum · Failed Rule · Reason for every failing record, and the patient-testing lock panel.
+   Changing a selection bumps the criteria version and re-locks patient testing.
+7. **Fields** — choose which detected fields take part in validation, with per-sample-type population
    coverage shown for each field. Rules on unselected fields are kept but skipped.
-7. **Rules** — build rules for any selected field; or `Suggest from data` to derive a starter set from
+8. **Rules** — build rules for any selected field; or `Suggest from data` to derive a starter set from
    the data's own statistics; `Test Rules` runs them over all in-scope records
-8. **QC Validation** — one run covering control **and** calibration together; the demo data
+9. **QC Validation** — one run covering control **and** calibration together; the demo data
    deliberately contains QC drift so the run fails
-9. **Correct** — a drawer offers *Edit Rule* or *Correct Data* (+ reason) and shows the source file of
+10. **Correct** — a drawer offers *Edit Rule* or *Correct Data* (+ reason) and shows the source file of
    the failing row, then **Save & Re-test** (no need to restart the workflow)
-10. **Approval** — checklist over files / analytics / fields / rules / QC, then sign-off → patient
+11. **Approval** — checklist over files / analytics / fields / rules / QC, then sign-off → patient
     testing unlocks
-11. **Patient Testing** — runs the patient records from the *same* uploaded files with a live progress
+12. **Patient Testing** — runs the patient records from the *same* uploaded files with a live progress
     simulation
-12. **Results** — PASS / FAIL / WARNING with search, filter, sort, pagination, per-analytics breakdown,
+13. **Results** — PASS / FAIL / WARNING with search, filter, sort, pagination, per-analytics breakdown,
     a per-sample detail drawer, and **Download Failed Records** (there is deliberately no passed-records
     file)
-13. **Validation History** / **Audit Logs** — versions, QC outcomes, and every change with before/after
+14. **Validation History** / **Audit Logs** — versions, QC outcomes, and every change with before/after
     values and reasons
 
 ### Failed records only

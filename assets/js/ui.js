@@ -288,6 +288,39 @@
       });
       right.appendChild(pills);
     }
+    /* column visibility — opt-in, useful when the file decides the columns */
+    var hidden = {};
+    (opts.hiddenColumns || []).forEach(function (k) { hidden[k] = true; });
+    function shownColumns() {
+      return opts.columns.filter(function (c) { return !hidden[c.key]; });
+    }
+    if (opts.columnToggle) {
+      var colBtn = btn('Columns', 'btn-secondary btn-sm', function () { openColumnPicker(); }, { icon: 'settings', iconSize: 14 });
+      right.appendChild(colBtn);
+    }
+    function openColumnPicker() {
+      var body = el('div', {});
+      body.appendChild(el('p', {
+        style: 'font-size:12.5px;color:var(--ink-2);line-height:1.6;margin-bottom:12px',
+        text: 'Choose which columns this table shows. Hidden columns are also left out of the export.'
+      }));
+      var list = el('div', { class: 'row', style: 'gap:10px;flex-wrap:wrap' });
+      opts.columns.forEach(function (c) {
+        if (c.lockVisible) return;
+        list.appendChild(checkbox(c.label || c.key, !hidden[c.key], function (on) {
+          if (on) delete hidden[c.key]; else hidden[c.key] = true;
+        }));
+      });
+      body.appendChild(list);
+      var m = modal({
+        title: 'Visible columns', size: 'narrow', body: body,
+        footer: [
+          btn('Show all', 'btn-ghost', function () { hidden = {}; m.close(); render(); }),
+          btn('Done', 'btn-primary', function () { m.close(); render(); }, { icon: 'check' })
+        ]
+      });
+    }
+
     (opts.toolbar || []).forEach(function (n) { right.appendChild(n); });
     if (opts.exportName) {
       right.appendChild(btn('Export', 'btn-secondary btn-sm', function () { doExport(); }, { icon: 'download', iconSize: 14 }));
@@ -346,8 +379,9 @@
       pagerEl.hidden = false;
 
       var table = el('table', { class: 'tbl' + (opts.compact ? ' compact' : '') });
+      var cols = shownColumns();
       var thead = el('thead'), tr = el('tr');
-      opts.columns.forEach(function (c) {
+      cols.forEach(function (c) {
         var th = el('th', {
           class: (c.align === 'right' ? 'num ' : '') + (c.sortable === false ? '' : 'sortable ') + (state.sort === c.key ? 'sorted' : ''),
           style: c.width ? 'width:' + c.width : null
@@ -369,7 +403,7 @@
       pageRows.forEach(function (row) {
         var rowCls = opts.rowClass ? opts.rowClass(row) : '';
         var trr = el('tr', { class: (rowCls || '') + (opts.onRow ? ' clickable' : '') });
-        opts.columns.forEach(function (c) {
+        cols.forEach(function (c) {
           var td = el('td', { class: c.align === 'right' ? 'num' : (c.align === 'center' ? 'tc' : '') });
           var v = c.render ? c.render(row) : rawValue(c, row);
           if (v instanceof Node) td.appendChild(v);
@@ -431,7 +465,7 @@
 
     function doExport() {
       var rows = visibleRows();
-      var cols = opts.exportColumns || opts.columns.filter(function (c) { return c.key !== 'actions'; });
+      var cols = opts.exportColumns || shownColumns().filter(function (c) { return c.key !== 'actions'; });
       var headers = cols.map(function (c) { return c.label; });
       var data = rows.map(function (r) {
         var o = {};
@@ -447,6 +481,9 @@
     }
 
     wrap.refresh = function (newRows) { if (newRows) opts.rows = newRows; render(); };
+    /* rows surviving the current search + filter, in sort order — lets callers
+       act on exactly what the user can see (bulk select, export a subset). */
+    wrap.visibleRows = visibleRows;
     render();
     return wrap;
   }
