@@ -130,6 +130,7 @@
         '</div>' +
         '<div class="lr-d">' + U.fmtInt(f.recordCount) + ' records · ' + f.columnCount + ' columns · ' +
         U.fmtBytes(f.size) + ' · ' + esc(U.fmtDateTime(f.uploadedAt)) +
+        (f.blankRowsSkipped ? ' · <span class="muted">' + U.fmtInt(f.blankRowsSkipped) + ' blank row(s) skipped</span>' : '') +
         (missing.length ? ' · <span style="color:var(--amber-700)">missing ' + missing.length + ' column(s)</span>' : '') +
         '</div></div>' +
         '<span class="badge badge-success">✓ Ready</span>';

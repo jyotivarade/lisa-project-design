@@ -582,22 +582,21 @@
         }
       },
       {
-        key: '__id', label: idCol || 'Row',
+        key: '__id', label: idCol || 'Row', lockVisible: true,
         value: function (r) { return idCol ? r[idCol] : 'Row ' + (r.__row + 1); },
         render: function (r) {
-          return '<span class="cell-strong">' + esc(idCol ? String(r[idCol]) : 'Row ' + (r.__row + 1)) + '</span>';
+          if (!idCol) return '<span class="cell-strong">Row ' + (r.__row + 1) + '</span>';
+          return U.isEmptyCell(r[idCol])
+            ? '<span class="muted">—</span>'
+            : '<span class="cell-strong">' + esc(U.displayValue(r[idCol])) + '</span>';
         }
       }
     ];
-    if (typeCol) {
-      columns.push({
-        key: '__type', label: typeCol,
-        value: function (r) { return r[typeCol]; },
-        render: function (r) { return '<span class="badge badge-neutral">' + esc(String(r[typeCol] || '—')) + '</span>'; }
-      });
-    }
+    /* Sample Type is an uploaded column like any other — plain text, the sheet's
+       own wording and casing, no badge styling that could imply a transform. */
+    if (typeCol) columns.push(rawColumn(a, typeCol));
     columns.push({
-      key: '__now', label: 'Currently',
+      key: '__now', label: 'Currently (assigned)',
       value: function (r) { return nowIn[Store.rowKey(r)] || 'unmatched'; },
       render: function (r) {
         var s = nowIn[Store.rowKey(r)] || 'unmatched';
@@ -606,7 +605,7 @@
       }
     });
     columns.push({
-      key: '__detected', label: 'Detected as',
+      key: '__detected', label: 'Detected as (auto)',
       value: function (r) { return base(r); },
       render: function (r) { return '<span class="muted">' + esc(Store.streamLabel(base(r))) + '</span>'; }
     });

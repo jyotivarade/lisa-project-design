@@ -938,16 +938,37 @@
    * Add one or more files to the SAME workflow.
    * files: [{ meta:{name,size,type,simulated,sections}, columns:[], rows:[] }]
    */
+  /**
+   * A row carrying nothing in ANY column is a spacer, not a record — trailing
+   * rows, separator lines, rows of "----" or "N/A". They are dropped on the way
+   * in so they never reach classification, criteria or the counts. The number
+   * dropped is kept on the file and reported, never silently discarded.
+   * Rows with even one real value are always kept, exactly as uploaded.
+   */
+  function splitBlankRows(rows, columns) {
+    var kept = [], skipped = 0;
+    var cols = columns && columns.length ? columns : null;
+    (rows || []).forEach(function (r) {
+      var keys = cols || Object.keys(r);
+      var hasValue = keys.some(function (c) { return !U.isBlank(r[c]); });
+      if (hasValue) kept.push(r); else skipped++;
+    });
+    return { rows: kept, skipped: skipped };
+  }
+
   function addFiles(a, incoming) {
     var added = [];
     (incoming || []).forEach(function (f) {
+      var clean = splitBlankRows(f.rows, f.columns);
       var entry = {
         id: U.uid('file'),
         name: uniqueFileName(a, f.meta.name),
         size: f.meta.size || 0, type: f.meta.type || '',
         uploadedAt: new Date().toISOString(),
-        columns: f.columns, records: f.rows,
-        recordCount: f.rows.length, columnCount: f.columns.length,
+        columns: f.columns, records: clean.rows,
+        recordCount: clean.rows.length, columnCount: f.columns.length,
+        blankRowsSkipped: clean.skipped,
+        rawRowCount: (f.rows || []).length,
         simulated: !!f.meta.simulated,
         sections: f.meta.sections || null,
         seedPart: f.meta.seedPart || null
@@ -957,6 +978,7 @@
       audit(a, {
         action: 'Data file uploaded',
         detail: entry.name + ' — ' + U.fmtInt(entry.recordCount) + ' records, ' + entry.columnCount + ' columns' +
+          (clean.skipped ? ' · ' + U.fmtInt(clean.skipped) + ' blank row(s) skipped' : '') +
           (entry.sections && entry.sections.length > 1 ? ' · ' + entry.sections.length + ' analyte sections' : ''),
         kind: 'info'
       });
@@ -2438,6 +2460,7 @@
     all: all, get: get, create: create, remove: remove,
     blankAnalytic: blankAnalytic, attachFile: attachFile, removeFile: removeFile,
     addFiles: addFiles, removeFileById: removeFileById, filesOf: filesOf, hasData: hasData,
+    splitBlankRows: splitBlankRows,
     columnsOf: columnsOf, refreshFields: refreshFields, sourceRecord: sourceRecord,
     recordsOf: recordsOf, scopedRecords: scopedRecords, fieldNames: fieldNames, ctxOf: ctxOf,
     groups: groups, baseGroups: baseGroups, counts: counts,

@@ -1004,6 +1004,9 @@
       ['Uploaded By', (Store.S.user && Store.S.user.name) || 'Admin User'],
       ['File Size', U.fmtBytes(f.size)],
       ['Number of Rows', U.fmtInt(f.recordCount)],
+      ['Blank Rows Skipped', f.blankRowsSkipped
+        ? U.fmtInt(f.blankRowsSkipped) + ' of ' + U.fmtInt(f.rawRowCount || f.recordCount) + ' uploaded'
+        : 'None'],
       ['Number of Columns', U.fmtInt(f.columnCount)],
       ['Processing Status', run ? (run.status === 'stale' ? 'Re-process required' : U.titleCase(run.status)) : 'Uploaded — not processed'],
       ['Validation Status', run
