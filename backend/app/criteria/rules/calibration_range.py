@@ -1,5 +1,7 @@
 """Calibrated measuring range, including N.I. High / N.I. Low (spec section 12)."""
 
+from typing import Any
+
 from app.criteria.derivations import CALIBRATION_RANGE
 from app.criteria.models import (
     ErrorCode,
@@ -100,7 +102,12 @@ class CalibrationRangeRule(BaseRule):
         )
 
     def _outcome(
-        self, config: RuleConfig, action: str, message: str, code: ErrorCode, **fields
+        self,
+        config: RuleConfig,
+        action: str,
+        message: str,
+        code: ErrorCode,
+        **fields: Any,
     ) -> RuleResult:
         if action == FLAG_ONLY:
             # Recorded and visible, but it does not fail the row (D-12).

@@ -23,7 +23,6 @@ from app.tests.unit.criteria.factories import (
     REAL_CALIBRATORS,
     REAL_CONTROLS,
     calibrator,
-    control,
 )
 
 
@@ -182,7 +181,10 @@ class TestRetentionTime:
         assert mean.result > median.result
 
     def test_median_of_an_even_count(self) -> None:
-        points = [calibrator(f"Cal_{i}", found_rt=rt) for i, rt in enumerate("4.0 4.2 4.4 5.0".split())]
+        points = [
+            calibrator(f"Cal_{i}", found_rt=rt)
+            for i, rt in enumerate(["4.0", "4.2", "4.4", "5.0"])
+        ]
         assert derive_rt_window(points, average_method="MEDIAN").result == Decimal("4.3")
 
     def test_zero_and_negative_retention_times_are_excluded(self) -> None:

@@ -54,11 +54,22 @@ fails every run; making it a patient row would be a safety defect.
 `DISCOVERED`. `UC` is `DISCOVERED`: shown in the control table as *NOT EVALUATED*, excluded
 from the verdict, never hidden.
 
-### D-12 — `N.I. Low` handling · **OPEN**
-§28 requires the token to be handled; no rule is specified for it.
+### D-12 — `N.I. Low` and below-range results · **OPEN**
+§28 requires the token to be handled; no rule is specified for it, and §12 names only the
+high side.
 **S:** treat as `UNDER_CALIBRATION_RANGE` in the `calibration_range` rule, default action
 `FAIL`, configurable to flag-only, symmetrical with `N.I. High` → `OVER_CALIBRATION_RANGE`
-(`FAIL`, per §12).
+(`FAIL`, per §12). The same code and action apply to a **numeric** result below the lowest
+calibrator, since it is equally extrapolated.
+
+**Consequence, visible on real data:** a result below the cut-off is usually also below the
+lowest calibrator, so such a row reports **two** failures — `CONCENTRATION_BELOW_CUTOFF` and
+`UNDER_CALIBRATION_RANGE`. Both are true of the row and §13 asks for every applicable
+failure, so they are not collapsed. On `Cocaine_2026_08_01` that is 26 cut-off failures and
+17 under-range failures across 118 patient rows. A reported **zero** is exempt: it is a
+negative result the cut-off rule has already decided, not a range excursion.
+**Needed from the lab:** confirm that reporting both is wanted, or that under-range should be
+flag-only when the cut-off has already failed the row.
 
 ### D-13 — Multi-analyte files · **OPEN**
 §29 requires support for files containing several analytes, while an Analytics has one
@@ -87,6 +98,23 @@ patient corrections is an explicit ADMIN configuration change, itself audited.
 the effect of a configuration change), with `false` for a clean re-review. Either way the new
 session gets a fresh snapshot and the parent is untouched.
 
+### D-17 — Which rule failures zero the concentration · **OPEN**
+The approved specification zeroes the concentration in exactly one place: §9, the cut-off
+(`Conc = 0` with the original preserved). The **earlier** version of the specification also
+zeroed it on an ion-ratio failure; §10 of the approved version does not.
+
+**S:** implemented per the approved specification — only `concentration_cutoff` zeroes, via
+its existing `zero_on_fail` parameter (default `true`). An ion-ratio or retention-time
+failure fails the row and reports the measured concentration unchanged, which is what the
+exception report needs in order to show what was actually observed.
+
+Making this configurable per rule is a one-line addition to each rule's parameter schema in
+`app/core/rule_catalog.py`. It was **not** added pre-emptively because the configuration
+validator requires an exact parameter match, so introducing a parameter invalidates every
+configuration version already stored.
+**Needed from the lab:** confirm that only the cut-off should zero, or name the other rules
+that should.
+
 ### D-16 — A row nothing could be evaluated against · **RESOLVED (stated for the record)**
 **S:** `FAILED` with `NOT_EVALUABLE`, never `PASSED`, and never written to the passed file.
 A file whose columns the rules cannot read reports zero passes and says so. An unverified row
@@ -107,6 +135,7 @@ Phase 11 suites can assert against the layouts actually named in the specificati
 
 ### B-2 — Values requiring laboratory sign-off before clinical use
 D-01/D-02 (ion-ratio formula and percentage), D-03/D-04 (tolerances), D-05 (ISTD basis and
-direction), D-06 (RT window width), D-12 (`N.I. Low`). All are configurable and all are
+direction), D-06 (RT window width), D-12 (`N.I. Low` and below-range), D-17 (which failures
+zero the concentration). All are configurable and all are
 displayed with their formula, inputs and configured percentage — but a default is still a
 decision, and these ones belong to the laboratory, not to the software.

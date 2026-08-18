@@ -3,7 +3,7 @@
 `TODO` · `IN PROGRESS` · `COMPLETED` · `BLOCKED`
 Nothing is marked `COMPLETED` without a passing automated test named in Evidence.
 
-**Current state: Phase 4 complete (upload, storage, CSV parsing, classification). Phase 5 (criteria engine) is next.**
+**Current state: Phase 5 complete (pure criteria engine). Phase 6 (validation + the processing gate) is next.**
 
 Evidence names the test that proves the row. Rows without evidence are not COMPLETED.
 
@@ -20,22 +20,22 @@ Evidence names the test that proves the row. Rows without evidence are not COMPL
 | 2 | Analyse before coding; document ambiguities | 0 | COMPLETED | this deliverable | docs/00-07, DECISIONS.md |
 | 3 / AD-1 | Configuration snapshot per session; engine reads snapshot only | 3, 6 | TODO | `docs/05` J | |
 | 3 / AD-2 | Three-layer gate; 409 on violation | 6 | TODO | `docs/02` G | |
-| 3 / AD-3 | Pure criteria engine, no framework imports | 5 | TODO | `docs/02` F | |
+| 3 / AD-3 | Pure criteria engine, no framework imports | 5 | COMPLETED | `docs/02` F | test_purity.py (36) — verified to fail on injected sqlalchemy/random imports |
 | 4.1 | Auth: Argon2, JWT, refresh rotation, RBAC, user profile | 2 | COMPLETED | `docs/00` O | test_auth.py (36), test_rbac.py (23), test_security.py (22), auth.test.tsx (9) |
 | 4.2 | Dashboard metrics & analytics summary | 9 | TODO | `docs/03` | |
 | 4.3 | Analytics management | 3 | COMPLETED | `docs/01` §2 | test_analytics.py::TestAnalyticsCrud (11) |
 | 4.4 | File management, no overwrite, duplicate detection without deletion | 4 | COMPLETED | `docs/01` §3 | test_upload.py (23) — additive, hash-flagged duplicates, byte-identical download |
 | 4.5 | CSV parser: headers, order, tokens, malformed/empty rows, source row number | 4 | COMPLETED | `docs/02` N | test_csv_parser.py (30) — header verbatim, blank skipped, malformed flagged |
 | 5 | Calibrator / control / patient identification, configurable | 4 | COMPLETED | `docs/02` classification | test_classifier.py (21) — Sample Type AND Sample ID, blanks never patients |
-| 6 | Calibration validation, configurable tolerance | 6 | TODO | `docs/02` K, D-03 | |
-| 7 | Control validation, configurable tolerance | 6 | TODO | `docs/02` L, D-04 | |
-| 8 | ISTD missing + suppression, configurable threshold and basis | 5, 7 | TODO | D-05 **OPEN** | |
-| 9 | Concentration cut-off from WCS1; original never lost | 5, 7 | TODO | D-10 | |
-| 10 | Ion ratio: span formula, configurable %, zero-ratio policy, full transparency | 5, 6 | TODO | D-01, D-02, D-07 | |
-| 11 | Retention time: average, configurable %, absolute mode | 5, 6 | TODO | D-06 | |
-| 12 | N.I. High → OVER_CALIBRATION_RANGE in failure logic | 5 | TODO | D-12 | |
-| 13 | Row-by-row processing, no stop at first failure, all failures | 7 | TODO | `docs/02` M | |
-| 14 | Detailed evaluation payload, mandatory-rule semantics | 5, 7 | TODO | `docs/02` F | |
+| 6 | Calibration validation, configurable tolerance | 6 | IN PROGRESS | `docs/02` K, D-03 | rule proven (27.87 fails at 25%, passes at 30%); selection, revalidation and gating are Phase 6 |
+| 7 | Control validation, configurable tolerance | 6 | IN PROGRESS | `docs/02` L, D-04 | rule proven (61.22/73.90 fail; UC `----` SKIPPED); selection and gating are Phase 6 |
+| 8 | ISTD missing + suppression, configurable threshold and basis | 5, 7 | COMPLETED | D-05 **OPEN** | test_rules_patient.py::TestInternalStandard (13) — basis always reported |
+| 9 | Concentration cut-off from WCS1; original never lost | 5, 7 | COMPLETED | D-10 | test_rules_patient.py::TestConcentrationCutoff (8) — original never overwritten |
+| 10 | Ion ratio: span formula, configurable %, zero-ratio policy, full transparency | 5, 6 | COMPLETED | D-01, D-02, D-07 | test_derivations.py — spec example 40/62@10% gives 37.8–64.2; all 3 zero policies |
+| 11 | Retention time: average, configurable %, absolute mode | 5, 6 | COMPLETED | D-06 | test_derivations.py::TestRetentionTime — PERCENTAGE, ABSOLUTE, MEAN, MEDIAN |
+| 12 | N.I. High → OVER_CALIBRATION_RANGE in failure logic | 5 | COMPLETED | D-12 | test_rules_patient.py::TestCalibrationRange (8) — N.I. High/Low, FLAG_ONLY |
+| 13 | Row-by-row processing, no stop at first failure, all failures | 7 | IN PROGRESS | `docs/02` M | engine proven on all four real runs; persistence and progress are Phase 7 |
+| 14 | Detailed evaluation payload, mandatory-rule semantics | 5, 7 | IN PROGRESS | `docs/02` F | engine payload complete; persisting it to rule_results is Phase 7 |
 | 15 | PASSED file + EXCEPTION report with all listed fields | 8 | TODO | `docs/02` outputs | |
 | 16 | Explicit state machine; 409 on bypass | 6 | IN PROGRESS | `docs/02` G | state machine complete and closed (test_state_machine.py); the gate lands in Phase 6 |
 | 17 | UI: navigation, dashboard, analytics, calibration, control, patient screens | 3–9 | TODO | `docs/04` | |

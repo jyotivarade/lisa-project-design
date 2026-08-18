@@ -1,7 +1,7 @@
 """Rule protocol and shared result helpers."""
 
 from decimal import Decimal
-from typing import Protocol
+from typing import Any, Protocol
 
 from app.criteria.models import (
     ErrorCode,
@@ -35,7 +35,7 @@ class BaseRule:
         config: RuleConfig,
         status: RuleStatus,
         message: str,
-        **fields,
+        **fields: Any,
     ) -> RuleResult:
         return RuleResult(
             rule_id=self.rule_id,
@@ -46,17 +46,17 @@ class BaseRule:
             **fields,
         )
 
-    def passed(self, config: RuleConfig, message: str, **fields) -> RuleResult:
+    def passed(self, config: RuleConfig, message: str, **fields: Any) -> RuleResult:
         return self._result(config, RuleStatus.PASS, message, **fields)
 
     def failed(
-        self, config: RuleConfig, message: str, error_code: ErrorCode, **fields
+        self, config: RuleConfig, message: str, error_code: ErrorCode, **fields: Any
     ) -> RuleResult:
         return self._result(
             config, RuleStatus.FAIL, message, error_code=error_code, **fields
         )
 
-    def skipped(self, config: RuleConfig, message: str, **fields) -> RuleResult:
+    def skipped(self, config: RuleConfig, message: str, **fields: Any) -> RuleResult:
         """The rule could not run.
 
         A skip is never a pass: if every rule skips, the engine marks the row

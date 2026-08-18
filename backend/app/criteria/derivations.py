@@ -6,8 +6,9 @@ section 10's data hazard is that an invalid Cal_1 must not be able to move the
 reference range without anyone noticing.
 """
 
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from decimal import Decimal
+from typing import Any
 
 from app.criteria.models import (
     CalculationTrace,
@@ -15,7 +16,7 @@ from app.criteria.models import (
     ControlPoint,
     EvaluationContext,
 )
-from app.criteria.values import Value, ValueKind
+from app.criteria.values import TokenSet, Value, ValueKind
 
 ION_RATIO_RANGE = "ION_RATIO_RANGE"
 RT_WINDOW = "RT_WINDOW"
@@ -29,7 +30,12 @@ ZERO_INVALID = "INVALID"
 ZERO_EXCLUDE = "EXCLUDE_FROM_RANGE"
 
 
-def _unavailable(key: str, formula: str, reason: str, excluded=()) -> CalculationTrace:
+def _unavailable(
+    key: str,
+    formula: str,
+    reason: str,
+    excluded: Sequence[Mapping[str, Any]] = (),
+) -> CalculationTrace:
     return CalculationTrace(
         key=key,
         formula=formula,
@@ -39,20 +45,20 @@ def _unavailable(key: str, formula: str, reason: str, excluded=()) -> Calculatio
     )
 
 
-def _exclusion(point: CalibratorPoint, value: Value, reason: str) -> dict:
+def _exclusion(point: CalibratorPoint, value: Value, reason: str) -> dict[str, Any]:
     return {"calibrator_id": point.calibrator_id, "value": value.raw, "reason": reason}
 
 
 def _usable_points(
     calibrators: Sequence[CalibratorPoint],
-    getter,
+    getter: Callable[[CalibratorPoint], Value],
     *,
     zero_policy: str | None = None,
     require_positive: bool = False,
-) -> tuple[list[tuple[CalibratorPoint, Decimal]], list[dict]]:
+) -> tuple[list[tuple[CalibratorPoint, Decimal]], list[dict[str, Any]]]:
     """Split calibrators into contributors and explained exclusions."""
     included: list[tuple[CalibratorPoint, Decimal]] = []
-    excluded: list[dict] = []
+    excluded: list[dict[str, Any]] = []
 
     for point in calibrators:
         value: Value = getter(point)
@@ -315,8 +321,8 @@ def derive_istd_basis(
 
 def build_context(
     *,
-    columns,
-    tokens,
+    columns: Mapping[str, str | None],
+    tokens: TokenSet,
     calibrators: Sequence[CalibratorPoint] = (),
     controls: Sequence[ControlPoint] = (),
     traces: Sequence[CalculationTrace] = (),

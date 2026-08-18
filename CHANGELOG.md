@@ -277,3 +277,52 @@ Realigned the entire design set to the revised specification:
   redesign.
 - `recovery` and `avg_recovery` are reported as unmapped for every real export, which is
   D-05 made visible at upload rather than discovered when a rule quietly does nothing.
+
+## [0.5.0] — 2026-08-19 — Phase 5: the pure criteria engine
+
+Built and tested entirely against constructed objects, before any wiring. Nothing in this
+phase touches a database, a request or a file — the engine is the part that must be provably
+correct, and building it after the persistence layer is how query convenience leaks into rule
+logic.
+
+### Added — `app/criteria/`
+- **Models**: `RowData`, `RuleConfig`, `RuleResult`, `RowEvaluation`, `CalculationTrace`,
+  `CalibratorPoint`, `ControlPoint`, `EvaluationContext` — frozen dataclasses throughout.
+- **Derivations** with a trace each: ion-ratio range (SPAN and MULTIPLICATIVE), retention-time
+  window (PERCENTAGE and ABSOLUTE, MEAN and MEDIAN), concentration cut-off (control Std. Conc.
+  or a fixed value), calibrated range, and the ISTD basis. Every excluded calibrator is
+  reported **with its reason**, so an invalid `Cal_1` cannot move a limit unnoticed.
+- **All seven rules**, each returning the full section 14 payload rather than a boolean.
+- **The engine**, with four guarantees: every applicable rule runs (no short-circuit); PASSED
+  only if every enabled mandatory rule passed; an exception inside a rule fails that row and
+  the run continues; a row nothing could evaluate is FAILED, never PASSED.
+
+### Verified
+- The specification's worked example reproduces exactly: `40, 62 @ 10%` → **37.8 – 64.2**.
+- The real run 01 derives ion ratio `24.45 – 34.77`, RT `3.479 – 5.218` (average 4.3484),
+  cut-off `1.5`, calibrated range `1 – 100`.
+- All four real exports process end to end with no engine error. Run 01: 118 patient rows,
+  65 passed, 53 failed, with all seven failure codes represented.
+- Determinism: 50 repeated evaluations of the same inputs give identical verdicts, and
+  evaluation never mutates its inputs.
+
+### Tests
+- 546 backend tests (up from 354). **Criteria coverage 98%**, above the 95% gate.
+- `mypy --strict` passes on `app/criteria` (16 files).
+- **Purity is enforced, not documented**: `test_purity.py` parses every module's imports and
+  rejects FastAPI, SQLAlchemy, psycopg, the app's own I/O layers, and non-deterministic
+  stdlib (`random`, `time`, `os`, `io`). Verified to fail on injected `sqlalchemy` and
+  `random` imports, then pass once removed.
+
+### Decisions
+- **D-17 (new, OPEN)** — which failures zero the concentration. The approved specification
+  zeroes in exactly one place (section 9, the cut-off); the earlier version also zeroed on an
+  ion-ratio failure. Implemented per the approved text: only the cut-off zeroes, via its
+  existing `zero_on_fail` parameter. Not made configurable per rule pre-emptively, because the
+  configuration validator requires an exact parameter match and adding one would invalidate
+  every stored configuration version.
+- **D-12 extended** — a numeric result below the lowest calibrator uses the same
+  `UNDER_CALIBRATION_RANGE` code as `N.I. Low`. On real data a below-cut-off result is usually
+  also below the lowest calibrator, so such a row reports **two** failures. Both are true and
+  section 13 asks for every applicable failure, so they are not collapsed. A reported zero
+  stays exempt.

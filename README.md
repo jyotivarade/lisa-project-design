@@ -22,9 +22,9 @@ React + TypeScript · Python + FastAPI · PostgreSQL · SQLAlchemy + Alembic · 
 | 1 | Project skeleton and database | ✅ complete |
 | 2 | Authentication and RBAC | ✅ complete |
 | 3 | Analytics and configuration | ✅ complete |
-| **4** | **File upload and CSV parsing** | ✅ **complete** |
-| 5 | Criteria engine | next |
-| 6 | Calibration/control validation and the processing gate | |
+| 4 | File upload and CSV parsing | ✅ complete |
+| **5** | **Criteria engine** | ✅ **complete** |
+| 6 | Calibration/control validation and the processing gate | next |
 | 7 | Patient processing | |
 | 8 | Output files and reports | |
 | 9 | Dashboard and complete frontend | |
@@ -107,6 +107,7 @@ uv run pytest                        # unit + integration (needs PostgreSQL)
 uv run pytest -m slow -s             # opt-in performance checks (500k-row parse)
 uv run pytest -m "not integration"   # unit only, no database
 uv run ruff check .
+uv run mypy app/criteria           # the pure engine is held to strict typing
 
 cd frontend
 npm test

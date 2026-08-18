@@ -52,23 +52,27 @@ def evaluate(**cells):
 
 class TestVerdict:
     def test_a_clean_row_passes(self) -> None:
+        # 1.7129 ng/mL is a real patient result: above the 1.5 cut-off and inside
+        # the 1–100 calibrated range.
         result = evaluate(
-            concentration="1.2163", ion_ratio="31.18", retention_time="4.355"
+            concentration="1.7129", ion_ratio="31.18", retention_time="4.355"
         )
         assert result.final_result is FinalResult.PASSED
         assert result.failure_codes == ()
 
     def test_one_failing_mandatory_rule_fails_the_row(self) -> None:
         # Spec section 13's worked example: cut-off fails, everything else passes.
+        # 1.2163 is a real patient result — below the 1.5 cut-off but still inside
+        # the calibrated range, so the cut-off is the only rule it trips.
         result = evaluate(
-            concentration="0.6582", ion_ratio="31.18", retention_time="4.355"
+            concentration="1.2163", ion_ratio="31.18", retention_time="4.355"
         )
         assert result.final_result is FinalResult.FAILED
         assert result.failure_codes == (ErrorCode.CONCENTRATION_BELOW_CUTOFF.value,)
 
     def test_a_failing_non_mandatory_rule_does_not_fail_the_row(self) -> None:
         result = ENGINE.evaluate(
-            row(istd_area="13395265", concentration="1.2163", ion_ratio="72.5",
+            row(istd_area="13395265", concentration="1.7129", ion_ratio="72.5",
                 retention_time="4.355"),
             context(traces=TRACES),
             patient_rules(ion_ratio={"mandatory": False}),
@@ -83,7 +87,7 @@ class TestAllFailuresCollected:
     def test_every_failure_is_reported_not_just_the_first(self) -> None:
         """Spec section 13: do not stop at the first failure."""
         result = evaluate(
-            concentration="0.6582",     # below cut-off
+            concentration="1.2163",     # below the 1.5 cut-off
             ion_ratio="72.5",           # outside the ratio range
             retention_time="9.9",       # outside the RT window
         )
@@ -94,11 +98,23 @@ class TestAllFailuresCollected:
             ErrorCode.RT_OUT_OF_RANGE.value,
         }
 
+    def test_a_result_below_both_the_cutoff_and_the_range_reports_both(self) -> None:
+        # 0.6582 is below the 1.5 cut-off *and* below the lowest calibrator. Both
+        # are true of the row, and section 13 asks for every applicable failure —
+        # collapsing them would hide one real finding behind another.
+        result = evaluate(
+            concentration="0.6582", ion_ratio="31.18", retention_time="4.355"
+        )
+        assert set(result.failure_codes) == {
+            ErrorCode.CONCENTRATION_BELOW_CUTOFF.value,
+            ErrorCode.UNDER_CALIBRATION_RANGE.value,
+        }
+
     def test_passing_rules_are_retained_alongside_failing_ones(self) -> None:
         # Spec section 14 wants the full evaluation, so a reviewer can see
         # "PASS - Internal Standard" next to "FAIL - Ion Ratio".
         result = evaluate(
-            concentration="1.2163", ion_ratio="72.5", retention_time="4.355"
+            concentration="1.7129", ion_ratio="72.5", retention_time="4.355"
         )
         statuses = {r.rule_id: r.status for r in result.rules}
         assert statuses["istd"] is RuleStatus.PASS
@@ -127,13 +143,13 @@ class TestAllFailuresCollected:
 class TestConcentrationHandling:
     def test_the_original_concentration_is_never_overwritten(self) -> None:
         """Spec section 9: the original must survive every adjustment path."""
-        result = evaluate(concentration="0.6582", ion_ratio="30", retention_time="4.3")
-        assert result.original_concentration == Decimal("0.6582")
+        result = evaluate(concentration="1.2163", ion_ratio="30", retention_time="4.3")
+        assert result.original_concentration == Decimal("1.2163")
         assert result.adjusted_concentration == Decimal(0)
         assert result.cutoff_value == Decimal("1.5")
 
     def test_a_passing_row_keeps_its_concentration(self) -> None:
-        result = evaluate(concentration="1.2163", ion_ratio="30", retention_time="4.3")
+        result = evaluate(concentration="1.7129", ion_ratio="30", retention_time="4.3")
         assert result.original_concentration == result.adjusted_concentration
 
     def test_only_the_cutoff_rule_zeroes_the_concentration(self) -> None:
@@ -226,7 +242,7 @@ class TestStreamAndEnablement:
 class TestDeterminism:
     def test_the_same_inputs_always_give_the_same_verdict(self) -> None:
         # Replaying a stored result depends on this (spec section 43).
-        data = row(istd_area="13395265", concentration="0.6582", ion_ratio="72.5",
+        data = row(istd_area="13395265", concentration="1.2163", ion_ratio="72.5",
                    retention_time="4.355")
         ctx = context(traces=TRACES)
         rules = patient_rules()
@@ -251,7 +267,7 @@ class TestDeterminism:
 
 class TestResultShape:
     def test_the_evaluation_carries_the_section_14_fields(self) -> None:
-        result = evaluate(concentration="0.6582", ion_ratio="30", retention_time="4.3")
+        result = evaluate(concentration="1.2163", ion_ratio="30", retention_time="4.3")
         assert result.source_row_number == 1
         assert result.sample_id == "2606251021"
         assert result.analyte == "Cocaine"

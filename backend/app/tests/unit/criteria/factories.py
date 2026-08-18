@@ -135,13 +135,20 @@ def dec(text: str) -> Decimal:
 
 # The seven real calibrators from Cocaine_2026_08_01.csv.
 REAL_CALIBRATORS = [
-    calibrator("Cal_1", ion_ratio="25.31", found_rt="4.348", std_concentration="1", percent_diff="-0.22"),
-    calibrator("Cal_2", ion_ratio="33.91", found_rt="4.341", std_concentration="2", percent_diff="-7.70"),
-    calibrator("Cal_3", ion_ratio="29.30", found_rt="4.367", std_concentration="5", percent_diff="9.39"),
-    calibrator("Cal_4", ion_ratio="31.16", found_rt="4.342", std_concentration="10", percent_diff="6.08"),
-    calibrator("Cal_5", ion_ratio="32.15", found_rt="4.339", std_concentration="20", percent_diff="-1.65"),
-    calibrator("Cal_6", ion_ratio="32.68", found_rt="4.364", std_concentration="40", percent_diff="-11.46"),
-    calibrator("Cal_7", ion_ratio="27.84", found_rt="4.338", std_concentration="100", percent_diff="11.25"),
+    calibrator("Cal_1", ion_ratio="25.31", found_rt="4.348",
+               std_concentration="1", percent_diff="-0.22"),
+    calibrator("Cal_2", ion_ratio="33.91", found_rt="4.341",
+               std_concentration="2", percent_diff="-7.70"),
+    calibrator("Cal_3", ion_ratio="29.30", found_rt="4.367",
+               std_concentration="5", percent_diff="9.39"),
+    calibrator("Cal_4", ion_ratio="31.16", found_rt="4.342",
+               std_concentration="10", percent_diff="6.08"),
+    calibrator("Cal_5", ion_ratio="32.15", found_rt="4.339",
+               std_concentration="20", percent_diff="-1.65"),
+    calibrator("Cal_6", ion_ratio="32.68", found_rt="4.364",
+               std_concentration="40", percent_diff="-11.46"),
+    calibrator("Cal_7", ion_ratio="27.84", found_rt="4.338",
+               std_concentration="100", percent_diff="11.25"),
 ]
 
 # The real controls, including UC whose %Diff is the missing token.
