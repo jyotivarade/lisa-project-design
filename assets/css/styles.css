@@ -471,6 +471,8 @@ table.tbl td{padding:10px var(--s4);border-bottom:1px solid var(--line-2);vertic
 table.tbl tbody tr:last-child td{border-bottom:0}
 table.tbl tbody tr:hover{background:var(--blue-50)}
 table.tbl tbody tr.clickable{cursor:pointer}
+table.tbl tbody tr.row-muted{opacity:.62}
+table.tbl tbody tr.row-muted:hover{opacity:.85}
 table.tbl tbody tr.row-fail{background:#FEF6F5}
 table.tbl tbody tr.row-fail:hover{background:#FDEFEE}
 table.tbl tbody tr.row-warn{background:#FFFBF3}

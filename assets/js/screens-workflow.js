@@ -191,6 +191,10 @@
       (run.failed ? ' · ' + U.fmtInt(run.failed) + ' failed' : '') + '</span>';
   }
 
+  /** Start an upload from anywhere — the Files screen, the overview, a card. */
+  Screens.pickFiles = function (a) { pickFiles(a); };
+  Screens.handleDroppedFiles = function (a, fileList) { handleFiles(a, fileList); };
+
   function pickFiles(a) {
     var input = el('input', { type: 'file', accept: ACCEPT.join(','), multiple: true, style: 'display:none' });
     document.body.appendChild(input);

@@ -120,6 +120,22 @@ original build. The enhanced flow lives entirely **inside** an analytic:
 14. **Validation History** / **Audit Logs** — versions, QC outcomes, and every change with before/after
     values and reasons
 
+### Files are a permanent part of the analytics record
+
+Each analytic owns a **Files** screen (`Files` button on every analyte screen, and from the analytics
+list card) holding every file it has ever seen:
+
+* **Current files** — name, upload time, size, records, columns, blank rows skipped, processing status
+  and passed/failed counts, with Preview, File Details and Remove per row.
+* **Previously uploaded files** — a removed file keeps its name, upload time and row/column counts, so
+  it stays reviewable from the record instead of disappearing.
+* **File history** — an append-only log of every upload, removal and processing run, with timestamp and
+  user, persisted with the analytic.
+
+Uploading is never gated on the workflow stage: the drop zone and `Upload File` are on the Files screen,
+the analytic overview and the Files action in the header of every analyte screen. A new file joins the
+same analytics record; existing files, results and selections are kept.
+
 ### Uploaded data is never rewritten
 
 Processing reads the uploaded values and reports on them; it does not edit them.

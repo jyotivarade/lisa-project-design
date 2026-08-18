@@ -133,6 +133,7 @@
         a.selectedFields = a.selectedFields || [];
         a.sampleOverrides = a.sampleOverrides || {};
         a.streamRules = a.streamRules || {};
+        a.fileHistory = a.fileHistory || [];
         a.streamTests = a.streamTests || null;
         return a;
       });
@@ -199,6 +200,7 @@
         patterns: null
       },
       sampleOverrides: {},       // "fileId:rowIndex" → stream — the user's manual selection
+      fileHistory: [],           // append-only record of every file ever uploaded
       streamRules: {},           // per-stream min/max rules keyed by stream
       streamTests: null,         // last Test Calibration / Test Controls dry run
       /* --- LISA analyte / assay configuration --- */
@@ -956,6 +958,82 @@
     return { rows: kept, skipped: skipped };
   }
 
+  /* ------------------------------------------------------------
+     File history — append-only, per analytic.
+
+     a.files holds what is CURRENTLY in the dataset. This is the record of
+     everything that ever was, so a removed or replaced file can still be
+     reviewed from the analytics record long after it left the working set.
+     ------------------------------------------------------------ */
+  function fileHistoryOf(a) {
+    a.fileHistory = a.fileHistory || [];
+    return a.fileHistory;
+  }
+
+  function recordFileEvent(a, event, file, extra) {
+    var entry = Object.assign({
+      id: U.uid('fh'), event: event, ts: new Date().toISOString(),
+      user: (S.user && S.user.name) || DEMO_USER.name,
+      fileId: file ? file.id : null,
+      fileName: file ? file.name : '',
+      size: file ? file.size : null,
+      recordCount: file ? file.recordCount : null,
+      columnCount: file ? file.columnCount : null,
+      columns: file && file.columns ? file.columns.slice() : null,
+      blankRowsSkipped: file ? (file.blankRowsSkipped || 0) : 0,
+      uploadedAt: file ? file.uploadedAt : null,
+      note: ''
+    }, extra || {});
+    fileHistoryOf(a).unshift(entry);
+    if (a.fileHistory.length > 300) a.fileHistory.length = 300;
+    return entry;
+  }
+
+  /** Is this file still part of the working dataset? */
+  function fileIsCurrent(a, fileId) {
+    return (a.files || []).some(function (f) { return f.id === fileId; });
+  }
+
+  /**
+   * One row per file ever uploaded — current ones first, then removed ones
+   * reconstructed from the history so they stay reviewable.
+   */
+  function fileLedger(a) {
+    var out = (a.files || []).map(function (f) {
+      var run = runOf(a, f.id);
+      return {
+        id: f.id, name: f.name, current: true, file: f,
+        uploadedAt: f.uploadedAt, size: f.size,
+        recordCount: f.recordCount, columnCount: f.columnCount,
+        blankRowsSkipped: f.blankRowsSkipped || 0,
+        run: run,
+        processing: run ? run.status : 'not-processed',
+        passed: run ? run.passed : null,
+        failed: run ? run.failed : null,
+        removedAt: null
+      };
+    });
+    var seen = {};
+    out.forEach(function (r) { seen[r.id] = true; });
+    fileHistoryOf(a).forEach(function (h) {
+      if (h.event !== 'removed' || !h.fileId || seen[h.fileId]) return;
+      seen[h.fileId] = true;
+      out.push({
+        id: h.fileId, name: h.fileName, current: false, file: null,
+        uploadedAt: h.uploadedAt, size: h.size,
+        recordCount: h.recordCount, columnCount: h.columnCount,
+        blankRowsSkipped: h.blankRowsSkipped || 0,
+        run: null, processing: 'removed', passed: null, failed: null,
+        removedAt: h.ts, removedBy: h.user
+      });
+    });
+    out.sort(function (x, y) {
+      if (x.current !== y.current) return x.current ? -1 : 1;
+      return new Date(y.uploadedAt || 0) - new Date(x.uploadedAt || 0);
+    });
+    return out;
+  }
+
   function addFiles(a, incoming) {
     var added = [];
     (incoming || []).forEach(function (f) {
@@ -975,6 +1053,9 @@
       };
       a.files.push(entry);
       added.push(entry);
+      recordFileEvent(a, 'uploaded', entry, {
+        note: clean.skipped ? U.fmtInt(clean.skipped) + ' blank row(s) skipped on import' : ''
+      });
       audit(a, {
         action: 'Data file uploaded',
         detail: entry.name + ' — ' + U.fmtInt(entry.recordCount) + ' records, ' + entry.columnCount + ' columns' +
@@ -1006,6 +1087,7 @@
   function removeFileById(a, id) {
     var f = (a.files || []).filter(function (x) { return x.id === id; })[0];
     if (!f) return;
+    recordFileEvent(a, 'removed', f, { note: 'Removed from the working dataset' });
     a.files = a.files.filter(function (x) { return x.id !== id; });
     // drop corrections that belonged to this file
     Object.keys(a.dataEdits || {}).forEach(function (k) {
@@ -1594,7 +1676,11 @@
       processedBy: (S.user && S.user.name) || DEMO_USER.name
     };
     a.processing = a.processing || { runs: {} };
+    var reprocessed = !!a.processing.runs[fileId];
     a.processing.runs[fileId] = run;
+    recordFileEvent(a, reprocessed ? 're-processed' : 'processed', file, {
+      note: U.fmtInt(res.passed) + ' passed, ' + U.fmtInt(res.failed) + ' failed · criteria v' + run.criteriaVersion
+    });
     audit(a, {
       action: 'File processed',
       detail: file.name + ' — ' + U.fmtInt(res.total) + ' rows · ' + U.fmtInt(res.passed) + ' passed, ' +
@@ -2073,6 +2159,7 @@
         action: 'Data file uploaded',
         detail: f.name + ' — ' + U.fmtInt(f.recordCount) + ' records, ' + f.columnCount + ' columns', kind: 'info'
       });
+      recordFileEvent(a, 'uploaded', f, { ts: f.uploadedAt });
     });
 
     // 2. analytics present in the files
@@ -2283,6 +2370,7 @@
         action: 'Data file uploaded',
         detail: f.name + ' — ' + U.fmtInt(f.recordCount) + ' records, ' + f.columnCount + ' columns', kind: 'info'
       });
+      recordFileEvent(a, 'uploaded', f, { ts: f.uploadedAt });
     });
 
     /* analytics scope — the files carry one analyte */
@@ -2461,6 +2549,8 @@
     blankAnalytic: blankAnalytic, attachFile: attachFile, removeFile: removeFile,
     addFiles: addFiles, removeFileById: removeFileById, filesOf: filesOf, hasData: hasData,
     splitBlankRows: splitBlankRows,
+    fileHistoryOf: fileHistoryOf, fileLedger: fileLedger, fileIsCurrent: fileIsCurrent,
+    recordFileEvent: recordFileEvent,
     columnsOf: columnsOf, refreshFields: refreshFields, sourceRecord: sourceRecord,
     recordsOf: recordsOf, scopedRecords: scopedRecords, fieldNames: fieldNames, ctxOf: ctxOf,
     groups: groups, baseGroups: baseGroups, counts: counts,

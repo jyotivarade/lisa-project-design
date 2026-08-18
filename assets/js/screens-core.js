@@ -70,6 +70,8 @@
     head.appendChild(left);
 
     var acts = el('div', { class: 'page-head-actions' });
+    acts.appendChild(UI.btn('Files', 'btn-secondary btn-sm', function () { App.go('analytic/' + a.id + '/files'); },
+      { icon: 'file', iconSize: 14 }));
     acts.appendChild(UI.btn('Analyte Configuration', 'btn-secondary btn-sm', function () { App.go('analytic/' + a.id + '/config'); }, { icon: 'settings', iconSize: 14 }));
     acts.appendChild(UI.btn('Criteria Module', 'btn-secondary btn-sm', function () { App.go('analytic/' + a.id + '/criteria'); }, { icon: 'rules', iconSize: 14 }));
     acts.appendChild(UI.btn('Validation History', 'btn-secondary btn-sm', function () { App.go('analytic/' + a.id + '/history'); }, { icon: 'version', iconSize: 14 }));
@@ -464,6 +466,8 @@
       '<div class="a-card-body">' +
         '<div class="a-meta">' + UI.statusBadge(status) + UI.versionChip(a.version) +
           (a.file ? '<span class="badge badge-neutral">' + U.icon('file', 11) + ' ' + U.fmtInt(a.file.recordCount) + '</span>' : '') +
+          '<span class="badge badge-neutral">' + U.icon('file', 11) + ' ' +
+            U.fmtInt(Store.filesOf(a).length) + ' file' + (Store.filesOf(a).length === 1 ? '' : 's') + '</span>' +
         '</div>' +
         '<p class="a-desc">' + esc(a.description || 'No description provided.') + '</p>' +
         '<div class="a-checks">' +
@@ -477,6 +481,8 @@
       '</span></div>';
 
     var foot = U.$('.a-card-foot', card);
+    foot.appendChild(UI.btn('Files', 'btn-secondary btn-sm', function () { App.go('analytic/' + a.id + '/files'); },
+      { icon: 'file', iconSize: 14 }));
     foot.appendChild(UI.btn('Open Analytics', 'btn-primary btn-sm', function () { App.go('analytic/' + a.id); }, { icon: 'arrowRight', iconSize: 14 }));
     return card;
   }
@@ -646,6 +652,57 @@
       flush: true, body: vt
     }));
     body.appendChild(cols);
+
+    /* uploaded files — reviewable and extendable straight from the record */
+    var ledger = Store.fileLedger(a);
+    var filesBody = el('div', {});
+    if (!ledger.length) {
+      filesBody.appendChild(UI.emptyState({
+        icon: 'file', title: 'No files uploaded yet',
+        desc: 'Upload one or more data files to start the workflow. More can be added at any time.',
+        actions: [UI.btn('Upload File', 'btn-primary', function () { Screens.pickFiles(a); }, { icon: 'plus' })]
+      }));
+    } else {
+      var fl = el('div', { class: 'list-rows' });
+      ledger.slice(0, 5).forEach(function (r) {
+        var row = el('div', { class: 'lr' + (r.current ? '' : ' row-muted') });
+        row.innerHTML =
+          '<span class="file-ico" style="width:32px;height:32px;border-radius:9px;font-size:9px">' +
+          esc((r.name.split('.').pop() || 'CSV').toUpperCase()) + '</span>' +
+          '<div class="lr-main"><div class="lr-t">' + esc(r.name) +
+          (r.current ? '' : ' <span class="badge badge-neutral">removed</span>') + '</div>' +
+          '<div class="lr-d">' + U.fmtInt(r.recordCount || 0) + ' records · ' + (r.columnCount || 0) + ' columns · ' +
+          (r.uploadedAt ? esc(U.relTime(r.uploadedAt)) : '—') +
+          (r.run ? ' · ' + U.fmtInt(r.passed) + ' passed / ' + U.fmtInt(r.failed) + ' failed' : '') +
+          '</div></div>';
+        if (r.current) {
+          var act = el('div', { class: 'lr-act' });
+          act.appendChild(UI.btn('Review', 'btn-secondary btn-sm', function () {
+            Screens.fileDetails(a, r.id);
+          }, { icon: 'eye', iconSize: 13 }));
+          row.appendChild(act);
+        }
+        fl.appendChild(row);
+      });
+      filesBody.appendChild(fl);
+      if (ledger.length > 5) {
+        filesBody.appendChild(el('p', {
+          class: 'muted mt3', style: 'font-size:12px',
+          text: (ledger.length - 5) + ' more file(s) in this analytics record.'
+        }));
+      }
+    }
+    body.appendChild(Screens.card({
+      title: 'Uploaded files',
+      badge: '<span class="badge badge-neutral">' + U.fmtInt(ledger.length) + ' total</span>',
+      actions: [
+        UI.btn('Upload File', 'btn-primary btn-sm', function () { Screens.pickFiles(a); }, { icon: 'plus', iconSize: 14 }),
+        UI.btn('All files & history', 'btn-secondary btn-sm', function () {
+          App.go('analytic/' + a.id + '/files');
+        }, { icon: 'file', iconSize: 14 })
+      ],
+      body: filesBody
+    }));
 
     /* recent audit for this analytic */
     var tl = el('div', { class: 'timeline' });
