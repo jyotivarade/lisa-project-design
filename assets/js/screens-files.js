@@ -165,11 +165,11 @@
           render: function (r) {
             var box = el('div', { class: 'row', style: 'gap:4px;justify-content:flex-end' });
             if (r.current) {
-              box.appendChild(UI.iconBtn('eye', 'Preview this file', function () {
-                App.go('analytic/' + a.id + '/preview?file=' + encodeURIComponent(r.id));
-              }));
-              box.appendChild(UI.iconBtn('info', 'File details', function () {
+              box.appendChild(UI.btn('View', 'btn-secondary btn-sm', function () {
                 Screens.fileDetails(a, r.id);
+              }, { icon: 'eye', iconSize: 13 }));
+              box.appendChild(UI.iconBtn('table', 'Preview the rows', function () {
+                App.go('analytic/' + a.id + '/preview?file=' + encodeURIComponent(r.id));
               }));
               box.appendChild(UI.iconBtn('trash', 'Remove from the dataset', function () {
                 confirmRemove(a, r);
@@ -225,7 +225,7 @@
         '</div></div>';
       if (Store.fileIsCurrent(a, h.fileId)) {
         var act = el('div', { class: 'lr-act' });
-        act.appendChild(UI.btn('Review', 'btn-secondary btn-sm', function () {
+        act.appendChild(UI.btn('View', 'btn-secondary btn-sm', function () {
           Screens.fileDetails(a, h.fileId);
         }, { icon: 'eye', iconSize: 13 }));
         row.appendChild(act);

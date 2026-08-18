@@ -581,7 +581,16 @@
       '<div style="min-width:220px;flex:1 1 260px"><div style="font-size:14.5px;font-weight:700">' + esc(next.title) + '</div>' +
       '<p style="font-size:12.5px;color:var(--ink-3);margin-top:2px">' + esc(next.text) + '</p></div></div>';
     var bAct = el('div', { style: 'margin-left:auto;display:flex;gap:8px;flex-wrap:wrap' });
-    bAct.appendChild(UI.btn(next.cta, 'btn-primary', function () { App.go('analytic/' + a.id + '/' + next.step); }, { icon: 'arrowRight' }));
+    bAct.appendChild(UI.btn(next.cta, 'btn-primary',
+      next.upload
+        ? function () { Screens.pickFiles(a); }
+        : function () { App.go('analytic/' + a.id + '/' + next.step); },
+      { icon: next.upload ? 'upload' : 'arrowRight' }));
+    if (next.secondary) {
+      bAct.appendChild(UI.btn(next.secondary.label, 'btn-secondary', function () {
+        App.go('analytic/' + a.id + '/' + next.secondary.step);
+      }, { icon: next.secondary.icon }));
+    }
     U.$('.card-body', banner).appendChild(bAct);
     body.appendChild(banner);
 
@@ -664,7 +673,7 @@
       }));
     } else {
       var fl = el('div', { class: 'list-rows' });
-      ledger.slice(0, 5).forEach(function (r) {
+      ledger.slice(0, 8).forEach(function (r) {
         var row = el('div', { class: 'lr' + (r.current ? '' : ' row-muted') });
         row.innerHTML =
           '<span class="file-ico" style="width:32px;height:32px;border-radius:9px;font-size:9px">' +
@@ -677,7 +686,7 @@
           '</div></div>';
         if (r.current) {
           var act = el('div', { class: 'lr-act' });
-          act.appendChild(UI.btn('Review', 'btn-secondary btn-sm', function () {
+          act.appendChild(UI.btn('View', 'btn-secondary btn-sm', function () {
             Screens.fileDetails(a, r.id);
           }, { icon: 'eye', iconSize: 13 }));
           row.appendChild(act);
@@ -685,10 +694,10 @@
         fl.appendChild(row);
       });
       filesBody.appendChild(fl);
-      if (ledger.length > 5) {
+      if (ledger.length > 8) {
         filesBody.appendChild(el('p', {
           class: 'muted mt3', style: 'font-size:12px',
-          text: (ledger.length - 5) + ' more file(s) in this analytics record.'
+          text: (ledger.length - 8) + ' more file(s) — open All files & history to see them.'
         }));
       }
     }
@@ -744,7 +753,14 @@
       case S.VALIDATION_PASSED: return { step: 'approval', cta: 'Approve Validation', icon: 'check', title: 'Ready for approval', text: 'Controls and calibration passed on v' + a.version + '. Sign off to unlock patient testing.', bg: 'var(--green-100)', fg: 'var(--green-700)' };
       case S.APPROVED: return { step: 'patient', cta: 'Start Patient Testing', icon: 'flask', title: 'Patient testing unlocked', text: 'Run the patient records already present in the uploaded file.', bg: 'var(--green-100)', fg: 'var(--green-700)' };
       case S.PATIENT_TESTING: return { step: 'patient', cta: 'Resume Testing', icon: 'play', title: 'Patient testing in progress', text: 'Continue the current patient sample run.', bg: 'var(--blue-100)', fg: 'var(--blue-700)' };
-      default: return { step: 'results', cta: 'View Results', icon: 'report', title: 'Patient results available', text: 'Review pass / fail outcomes and export the run.', bg: 'var(--teal-100)', fg: 'var(--teal-600)' };
+      default: return {
+        step: 'results', cta: 'Upload File for Test', icon: 'upload', upload: true,
+        title: 'Ready for the next run',
+        text: 'This run is complete. Upload another file to test it against the approved configuration — ' +
+          'previously uploaded files stay listed below.',
+        secondary: { label: 'View Results', step: 'results', icon: 'report' },
+        bg: 'var(--teal-100)', fg: 'var(--teal-600)'
+      };
     }
   }
 }(typeof window !== 'undefined' ? window : this));
