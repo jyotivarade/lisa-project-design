@@ -36,8 +36,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Upload entire repository
-          path: '.'
+          # Upload the reference prototype (the LISA app itself is not a static site)
+          path: './prototype'
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v5

@@ -1,272 +1,148 @@
-# LISA — Laboratory Information System Analysis (Frontend Prototype)
+# LISA — Laboratory Information System Analysis
 
-A fully interactive, clickable prototype of a laboratory **analyte validation and CSV processing
-platform**, built with **HTML5 + CSS3 + vanilla JavaScript only** — no React, Angular, Vue or any
-framework, and no build step, bundler or dependency install.
+LISA processes CSV files exported from laboratory instruments. It classifies every row as
+calibrator, control or patient, validates the run's calibration and quality controls, and —
+**only when that validation passes** — evaluates every patient row independently through a
+configurable criteria engine, producing a PASSED file, an exception report, and a permanent,
+auditable processing record.
 
-## Run it
+The safety property the whole system is built around:
 
-Open `index.html` in a browser. That's it.
+> **Patient results are never produced from a run whose calibration or controls have not passed.**
 
-```
-open index.html          # macOS
-```
+React + TypeScript · Python + FastAPI · PostgreSQL · SQLAlchemy + Alembic · pure criteria engine.
 
-Prototype credentials:
+---
 
-```
-Email:    admin@analytics.com
-Password: Admin@123
-```
+## Status
 
-## LISA workflow (per analyte)
+| Phase | Scope | State |
+|---|---|---|
+| 0 | Architecture and planning | ✅ complete — `docs/` |
+| 1 | Project skeleton and database | ✅ complete |
+| 2 | Authentication and RBAC | ✅ complete |
+| 3 | Analytics and configuration | ✅ complete |
+| **4** | **File upload and CSV parsing** | ✅ **complete** |
+| 5 | Criteria engine | next |
+| 6 | Calibration/control validation and the processing gate | |
+| 7 | Patient processing | |
+| 8 | Output files and reports | |
+| 9 | Dashboard and complete frontend | |
+| 10 | Audit logging | |
+| 11 | Testing | |
+| 12 | Docker, deployment, documentation | |
 
-An analyte (e.g. **Cocaine**, code `COC`) owns many run files, its own configuration and its own
-criteria. Inside an analyte the workflow is an 11-step stepper:
+Requirement-by-requirement status: [REQUIREMENTS.md](REQUIREMENTS.md).
+Business-rule decisions and open questions: [DECISIONS.md](DECISIONS.md).
 
-```
-Upload Files → Analytics → Sample Types → Sample Selection → Criteria → Fields
-             → Rules → QC Validation → Approval → Patient Testing → Results
-```
+## Documentation
 
-* **Analyte Configuration** (`Analyte Configuration` button on any analyte screen) — analyte name/code,
-  assay, matrix, **Reference Ratio Adjustment %**, and cut-off configuration (dynamic from the `WCS1`
-  control row, or a fixed value). Stored per analyte — every analyte carries its own values, and a table
-  on the screen shows them side by side. Saving bumps the **criteria version** and marks processed files
-  for re-processing.
-* **Multiple files per analyte** — `Cocaine_2026_08_01.csv … _08_04.csv` all belong to the same analyte
-  and are processed together. Each file keeps its own metadata and processing state; click a file to open
-  **File Details**: file ID, analyte, assay, upload time, uploaded by, size, rows, columns, processing
-  status, validation status, criteria version, processing start/completion time, passed/failed/warning
-  counts, per-criterion breakdown, the values derived for that run, and the outputs.
-* **Sample classification** — LISA definitions out of the box: calibrators `Cal_1…Cal_7` /
-  Sample Type `Standard`; controls `WSC_*` / `WCS*` / `UC` / Sample Type `Control`; patients numeric
-  Sample ID / Sample Type `Unknown`. Patterns and Sample-Type values are editable per stream (`ID AND
-  Type` or `ID OR Type`), and blanks/double-blanks stay deliberately unmatched.
-* **Criteria Module** — the seven criteria, each with sample stream, mapped column, operator, threshold,
-  calculation and enable/disable, plus `Column Mapping`, `Test Criteria` (dry run) and
-  `Execute Processing` (row-by-row over every file):
-
-  | Criterion | Stream | Reads | Default |
-  |---|---|---|---|
-  | Check Calibrator Accuracy | Standard | `% Diff` | > 25 % → fail |
-  | Check Control Accuracy | Control | `% Diff` | > 25 % → fail |
-  | Check Internal Standard Errors | Unknown | `ISTD Area`, `% Recovery` | missing peak · recovery ratio < 90 % |
-  | Flag Concentrations Below Cut-off | Unknown | `Conc. (ng/mL)` | < cut-off → flag (**value preserved**) |
-  | Check Ion Ratio | Unknown | `Ref 1 Actual Ratio` | outside calibrator range ± Reference Ratio Adjustment |
-  | Check Retention Time | Unknown | `Found RT` | outside calibrator average ± 20 % |
-  | Check Calibration Range | Unknown | `Conc. (ng/mL)` | outside lowest–highest calibrator → warning |
-
-  Criteria form a **pipeline**, but by default nothing is rewritten: each criterion reports on the value
-  as uploaded. Enabling a criterion's `Rewrite value to 0` restores the old chained behaviour, where a
-  result zeroed by the cut-off is not then flagged as below-range.
-* **Derived values** are computed from the run itself and shown on screen with their provenance: cut-off
-  (Std. Conc. of the cut-off control), ion-ratio range (lowest/highest calibrator ratio widened by the
-  analyte's adjustment, zero ratios excluded by default), RT window, calibrated measuring range.
-* **Outputs per file** — `Download Passed File` (rows that passed, in the source file's own columns and
-  order, values exactly as uploaded) and `Download Exceptions Report` (one row per failed criterion with
-  analyte, assay, stream, source file, sample ID, criterion, failed column, actual value, minimum,
-  maximum, reason, severity, criteria version and processing time). The passed file is **held** while any calibrator/control criterion fails or a run
-  is stale; the exceptions report is always available.
-
-## The core business rule
-
-The **uploaded files** contain control, calibration and patient records together — there is never a
-separate control, calibration or patient upload. Control and calibration are validated **together** from
-that data, and **patient testing stays locked** until every required control and calibration record
-passes *and* the configuration is approved. A single failing QC record keeps the lock in place until the
-rule or the data is corrected and re-tested; patient records are then tested with the approved rules,
-straight from the same files.
-
-Changing a file, the analytics scope, the sample classification, **which records are calibration or
-control**, the selected fields, a min/max rule, a criterion, a rule or its group logic creates a
-**new configuration version**, invalidates the approval and **re-locks patient testing**.
-
-## Click-through journey
-
-Everything before the Analytics screen (login, dashboard, sidebar, header, analytics list/cards) is the
-original build. The enhanced flow lives entirely **inside** an analytic:
-
-1. **Sign in** → Dashboard
-2. **Analytics** → open an analytic, or `+ Create Analytics`
-3. **Upload Files** — drag & drop **one or many** CSV files (real parsing), add more later, remove
-   individually, or load a generated demo file. All files feed the *same* workflow.
-4. **Analytics** — the files are scanned for the analytics they contain (file → analytics tree) and you
-   pick which analytics this workflow validates. Records of other analytics are excluded from every run.
-5. **Sample Types** — pick any column as the sample-type field and map its values to
-   control / calibration / patient (a mapping is *suggested* from the data, never hardcoded)
-6. **Sample Selection** — detection only *proposes* the split; here you confirm it record by record.
-   A searchable, filterable table of every in-scope row lets you tick any row into the calibration or
-   control set — `Cal_1…Cal_n` and `WCS1…WCS3` are whatever this file happened to contain, never a rule.
-   Patient records are never picked by hand: whatever is left over *is* the patient set. The same screen
-   carries **Test Calibration** / **Test Controls**, which show Sample ID · Field · Actual · Minimum ·
-   Maximum · Failed Rule · Reason for every failing record, and the patient-testing lock panel.
-   Changing a selection bumps the criteria version and re-locks patient testing.
-7. **Fields** — choose which detected fields take part in validation, with per-sample-type population
-   coverage shown for each field. Rules on unselected fields are kept but skipped.
-8. **Rules** — build rules for any selected field; or `Suggest from data` to derive a starter set from
-   the data's own statistics; `Test Rules` runs them over all in-scope records
-9. **QC Validation** — one run covering control **and** calibration together; the demo data
-   deliberately contains QC drift so the run fails
-10. **Correct** — a drawer offers *Edit Rule* or *Correct Data* (+ reason) and shows the source file of
-   the failing row, then **Save & Re-test** (no need to restart the workflow)
-11. **Approval** — checklist over files / analytics / fields / rules / QC, then sign-off → patient
-    testing unlocks
-12. **Patient Testing** — runs the patient records from the *same* uploaded files with a live progress
-    simulation
-13. **Results** — PASS / FAIL / WARNING with search, filter, sort, pagination, per-analytics breakdown,
-    a per-sample detail drawer, and **Download Failed Records** (there is deliberately no passed-records
-    file)
-14. **Validation History** / **Audit Logs** — versions, QC outcomes, and every change with before/after
-    values and reasons
-
-### Files are a permanent part of the analytics record
-
-Each analytic owns a **Files** screen (`Files` button on every analyte screen, and from the analytics
-list card) holding every file it has ever seen:
-
-* **Current files** — name, upload time, size, records, columns, blank rows skipped, processing status
-  and passed/failed counts, with Preview, File Details and Remove per row.
-* **Previously uploaded files** — a removed file keeps its name, upload time and row/column counts, so
-  it stays reviewable from the record instead of disappearing.
-* **File history** — an append-only log of every upload, removal and processing run, with timestamp and
-  user, persisted with the analytic.
-
-Uploading is never gated on the workflow stage: the drop zone and `Upload File` are on the Files screen,
-the analytic overview and the Files action in the header of every analyte screen. A new file joins the
-same analytics record; existing files, results and selections are kept.
-
-### Uploaded data is never rewritten
-
-Processing reads the uploaded values and reports on them; it does not edit them.
-
-* The **passed file** is emitted with the source file's own columns, in its own order, carrying the
-  values exactly as uploaded — no status columns, no adjustments appended.
-* Criteria that used to overwrite a value (sub-cut-off concentrations, non-conforming ion ratios)
-  now **flag** the row instead. The old behaviour is still available per criterion via
-  `Rewrite value to 0`, which is **off** by default.
-* The one way a value ever changes is a deliberate on-screen correction (`Edit` → *Save & Re-test*),
-  which touches a single cell and records the before/after pair and a reason in the audit trail.
-* Uploaded rows are stored with the analytic, so a page reload brings back the same data. Only if the
-  browser's storage quota is exceeded are rows dropped, and the app says so rather than failing quietly.
-
-### Failed records only
-
-Validation never produces a `Pass` file. Passed records stay part of the uploaded dataset; only the
-failing (and warning) records are extracted, one row per rule failure, carrying:
-
-`…every selected original field…` + `Analytics` + `Sample Type` + `Source File` + `Failed Field` +
-`Failed Rule` + `Failure Reason` + `Severity` + `Validation Timestamp`
-
-Available as **Download Failed Records** on the QC validation screen and **Download Failed Patient
-Records** on the results screen (plus a preview drawer from the locked-state panel).
-
-### Multiple files, multiple analytics
-
-* Files may differ in shape — columns are unioned, and each record remembers its source file.
-* A file may hold several analytics, either as a column value **or** as repeated header blocks in one
-  sheet (`Name, Mitragynine` … `Name, Temazepam`), which the parser splits and promotes to a real
-  column.
-* Rules are scoped to the selected analytics, so a rule configured for one analytic can never touch
-  another analytic's records.
-* Instrument "no result" tokens (`----`, `N.I.(High)`, `N/A`, …) are treated as missing everywhere, so
-  numeric columns are still detected as numeric. The token list is editable in
-  *Settings → Validation policy*.
-
-To see the failure→correction→re-test path from scratch, open **Renal Function Panel** (rules ready, QC
-not yet run) or **Lipid Profile** (already failing). **Complete Blood Count** and **Vitamin D** are
-empty drafts for the full upload-first journey.
-
-## Everything is dynamic
-
-Nothing about a file is assumed. Field names, field count, data types, control levels, thresholds,
-sample-type values and rule parameters all come from the uploaded data or from user configuration:
-
-- **Field discovery** — columns are read from the file; data types (`text` / `number` / `date` /
-  `boolean`) are inferred from value distributions (`U.describeFields`, `U.inferType`).
-- **Sample classification** — any column can be the discriminator; its distinct values populate the
-  mapping dropdowns. Suggestions come from structural analysis (which groups are populated where) plus
-  lexical hints, and are always user-editable.
-- **Rule catalogue** — each rule type declares its own parameter schema, so the rule builder renders
-  itself for any field. Available rule types are filtered by the field's inferred data type.
-- **Derived limits** — `Suggest from data` computes numeric limits from the file's own population
-  statistics (mean ± 2 SD warn / ± 3 SD fail), allowed value lists from observed distinct values, and a
-  recovery limit against a *detected* target field (populated for QC material, blank for patients).
-
-## Rule engine
-
-| Data type | Rule types |
+| Document | Contents |
 |---|---|
-| Text | Required, Equals, Not Equals, Contains, Starts With, Ends With, In List, Regex, Length, Custom Expression |
-| Number | Required, Equals, Not Equals, Greater Than, Less Than, Between, Outside Range, Percentage Difference, Expected Value Comparison, Decimal Precision, Custom Formula |
-| Date | Required, Valid Date, Before, After, Between, Not Future, Custom Expression |
-| Boolean | Required, Must be TRUE, Must be FALSE |
+| [docs/00-ARCHITECTURE.md](docs/00-ARCHITECTURE.md) | System architecture, folder structures, security |
+| [docs/01-DATA-MODEL.md](docs/01-DATA-MODEL.md) | Schema, entity relationships, indexes |
+| [docs/02-PROCESSING-ENGINE.md](docs/02-PROCESSING-ENGINE.md) | Workflows, state machine, criteria engine, formulas |
+| [docs/03-API-CONTRACT.md](docs/03-API-CONTRACT.md) | REST surface and contract guarantees |
+| [docs/04-FRONTEND.md](docs/04-FRONTEND.md) | Frontend architecture and screens |
+| [docs/05-CONFIGURATION.md](docs/05-CONFIGURATION.md) | Configuration model and snapshot strategy |
+| [docs/06-IMPLEMENTATION-PLAN.md](docs/06-IMPLEMENTATION-PLAN.md) | Phases, exit criteria, risks |
+| [docs/07-TESTING.md](docs/07-TESTING.md) | Testing strategy |
 
-Per rule: **severity** (Error blocks approval / Warning flags only), **Apply To** scope
-(control / calibration / patient / all), enable-disable, duplicate, delete, drag-to-reorder, and an
-optional **IF / THEN** condition on any other field. Per field: **ALL** or **ANY** group logic.
-
-**Custom formulas** are parsed by a restricted recursive-descent evaluator (`expr.js`) supporting
-`[Field Name]` references, `+ - * / % ^`, parentheses and a fixed function set
-(`abs round floor ceil sqrt min max pow avg`). `eval` and `new Function` are never used, so arbitrary
-JavaScript cannot execute; syntax and unknown-field errors surface in the builder via *Validate Formula*.
-
-## Project layout
+## Repository layout
 
 ```
-index.html                  app shell: login, sidebar, header, modal/drawer/toast roots
-assets/css/styles.css       design tokens + all component styles (light, responsive, print)
-assets/js/util.js           DOM helpers, formatters, icons, CSV parse/serialise, type inference
-assets/js/expr.js           safe expression compiler/evaluator for custom formula rules
-assets/js/rules.js          rule catalogue (schemas + evaluators) and the validation engine
-assets/js/seed.js           demo catalogue, deterministic data generator, suggestion engines
-assets/js/store.js          state, analytic lifecycle, state machine, versioning, audit, persistence
-assets/js/ui.js             toasts, modals, drawers, confirm/reason dialogs, badges, data table
-assets/js/screens-core.js   dashboard, analytics list, create analytic, overview, workflow shell
-assets/js/screens-workflow.js   multi-file upload, preview, analytics detection, classification,
-                            field selection, rule config, rule builder, rule test
-assets/js/screens-validation.js QC validation, correction drawer, re-test, approval, history
-assets/js/screens-patient.js    patient lock/unlock, progress run, results, result detail
-assets/js/screens-admin.js      rules engine, QC index, patient index, history, reports, audit, settings
-assets/js/app.js            bootstrap, auth, hash router, sidebar/header chrome
-sample-data/*.csv           realistic sample files (analyte column + controls + calibrators + patients
-                            in one file; the lipid file carries three analytes)
+backend/          FastAPI application, criteria engine, migrations, tests
+frontend/         React + TypeScript application
+docs/             Architecture and design documents
+prototype/        The original vanilla-JS prototype — behavioural reference, still runnable
+docker-compose.yml
 ```
 
-## State machine
+`prototype/` is kept unchanged and unported. It is the reference for the criteria and
+column-mapping behaviour; where it disagrees with the specification, the specification wins
+and the difference is recorded in [DECISIONS.md](DECISIONS.md).
 
+## Running it
+
+### With Docker
+
+```bash
+cp backend/.env.example backend/.env
+docker compose up --build
+# API      http://localhost:8000/api/docs
+# Frontend http://localhost:5173
 ```
-DRAFT → FILES_UPLOADED → ANALYTICS_SELECTED → CLASSIFIED → FIELDS_SELECTED → RULES_CONFIGURED
-      → VALIDATING_CONTROL_CALIBRATION
-          ├── VALIDATION_FAILED → (correct rule or data) → re-test ─┐
-          └── VALIDATION_PASSED → APPROVAL ──────────────────────────┴→ PATIENT_TESTING_UNLOCKED
-                                                                        → PATIENT_TESTING → RESULTS
+
+The `migrate` service runs Alembic and seeds reference data before the API starts.
+
+### Locally
+
+Requires Python 3.12+ (via [uv](https://docs.astral.sh/uv/)), Node 20+, and PostgreSQL 14+.
+
+```bash
+# --- database ---
+createdb lisa && createdb lisa_test
+
+# --- backend ---
+cd backend
+cp .env.example .env                 # set LISA_DATABASE_URL for your machine
+uv sync
+uv run alembic upgrade head          # create the schema
+uv run python -m app.cli seed        # roles, permissions, rule catalogue
+uv run python -m app.cli create-admin \
+    --email admin@lisa.local --full-name "Lab Administrator"
+uv run uvicorn app.main:app --reload --port 8000
+
+# --- frontend (second terminal) ---
+cd frontend
+npm install
+npm run dev                          # http://localhost:5173, /api proxied to :8000
 ```
 
-`Store.stateOf(analytic)` derives the state from data (never a stored flag), and `Store.stepStates()`
-maps it to the 9-step stepper (`done` / `current` / `pending` / `failed` / `locked`).
+## Testing
 
-Any of these changes invalidates an approval, creates a new configuration version and re-locks patient
-testing: adding/removing a **file**, changing the **analytics scope**, changing the **sample
-classification**, changing the **selected fields**, or adding/editing/deleting/reordering/disabling a
-**rule** (including group logic).
+```bash
+cd backend
+uv run pytest                        # unit + integration (needs PostgreSQL)
+uv run pytest -m slow -s             # opt-in performance checks (500k-row parse)
+uv run pytest -m "not integration"   # unit only, no database
+uv run ruff check .
 
-## Backend readiness
+cd frontend
+npm test
+npm run typecheck
+npm run build
+```
 
-State mutations are funnelled through `Store` (`attachFile`, `applyClassification`, `addRule`,
-`updateRule`, `runQCValidation`, `approve`, `correctData`, `runPatientTesting`, …), so each one maps
-cleanly onto a REST endpoint without touching screen code. Screens read from `Store` and re-render;
-they never hold their own copy of domain state. `Rules.runSet` / `Rules.evalRecord` are pure functions
-over `(records, scope, rules)` and can be replaced by server-side validation with the same result shape.
+Integration tests migrate `lisa_test` with Alembic — the same path a deployment takes — and
+run each test inside a transaction that is rolled back. Override the target with
+`LISA_TEST_DATABASE_URL`.
 
-## Prototype boundaries
+## Test fixtures
 
-- **XLSX/XLS**: CSV is parsed for real. Binary spreadsheets need a reader library or a server, so the
-  prototype clearly flags it and substitutes an equivalent generated dataset to keep the workflow
-  exercisable end to end.
-- **Persistence**: state lives in `localStorage` (key `analytix.state.v1`). Bulk record sets are not
-  persisted — demo files regenerate deterministically; files you upload yourself stay in memory for the
-  session (after a reload the workflow asks for them again). Reset everything under
-  *Settings → Prototype data*.
-- **Progress runs**: validation and patient testing animate a batch run; the pass/fail outcome itself is
-  computed by the real rule engine, not faked.
+`backend/app/tests/fixtures/` holds real LC-MS/MS exports used **only** by the test suite.
+They are never seeded into any database: an empty installation reports
+"No analytics data available" rather than fabricating numbers.
+
+Two of the four Cocaine runs contain genuine QC failures (`Cal_4 %Diff 27.87`,
+`WCS1 %Diff 61.22`, `WCS2 %Diff 73.90`), which is what makes them the right fixtures for
+proving the processing gate actually blocks.
+
+## Accounts
+
+There is no self-service registration: a laboratory system with open signup has no meaningful
+access control. The first administrator is created with `python -m app.cli create-admin`
+(omit `--password` to be prompted), and every account after that is created by an
+administrator through **Administration → Users**.
+
+Roles are `ADMIN`, `ANALYST` and `VIEWER`. Permissions are rows in the database, not
+hard-coded checks, so a role can be re-scoped without a deployment. An analyst runs the
+laboratory workflow end to end but cannot administer users or read the audit trail.
+
+## Business configuration
+
+No tolerance, adjustment percentage, threshold, calibrator ID or control ID is hard-coded in
+either application. Defaults are seeded once into `rule_definitions` from
+`backend/app/core/rule_catalog.py`; from then on the values live in the database per
+Analytics, and each processing session stores an immutable snapshot of the configuration it
+actually used — so changing configuration can never alter a historical result.

@@ -1,0 +1,56 @@
+# LISA — development stack.
+#
+# Migrations run as a one-shot job, never on application start: an app that
+# migrates on boot will race itself the moment there is more than one replica.
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: lisa
+      POSTGRES_PASSWORD: lisa
+      POSTGRES_DB: lisa
+    ports: ["5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lisa -d lisa"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  migrate:
+    build: ./backend
+    environment:
+      LISA_DATABASE_URL: postgresql+psycopg://lisa:lisa@postgres:5432/lisa
+    command: >
+      sh -c "uv run alembic upgrade head && uv run python -m app.cli seed"
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    build: ./backend
+    environment:
+      LISA_DATABASE_URL: postgresql+psycopg://lisa:lisa@postgres:5432/lisa
+      LISA_ENVIRONMENT: development
+      LISA_SECRET_KEY: dev-only-insecure-key-change-me-0123456789
+      LISA_STORAGE_LOCAL_ROOT: /srv/var/storage
+    ports: ["8000:8000"]
+    volumes: ["storage:/srv/var/storage"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:8000/api/health/live')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  frontend:
+    build: ./frontend
+    ports: ["5173:80"]
+    depends_on:
+      api: { condition: service_started }
+
+volumes:
+  pgdata:
+  storage:

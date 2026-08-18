@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+/* LISA design tokens. Status colours are paired with an icon and a text label
+   everywhere they are used — a laboratory result that reads as "green" to one
+   reviewer and as nothing to another is a defect, not a style choice. */
+@theme {
+  --color-lab-50: #f4f7fb;
+  --color-lab-100: #e8eef6;
+  --color-lab-200: #cbd9ea;
+  --color-lab-500: #3f6394;
+  --color-lab-600: #2f4d78;
+  --color-lab-700: #243c5e;
+  --color-lab-900: #14243a;
+
+  --color-pass: #15803d;
+  --color-fail: #b91c1c;
+  --color-warn: #b45309;
+  --color-blocked: #7c2d12;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: var(--color-lab-50);
+  color: var(--color-lab-900);
+}
