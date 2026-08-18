@@ -359,6 +359,22 @@
   var MISSING_TOKENS = ['----', '---', '--', '-', 'n/a', 'n.a.', 'na', 'null', 'nan', 'none',
     '#n/a', '#value!', 'n.i.', 'n.i.(high)', 'n.i.(low)', 'not detected', 'no peak'];
 
+  /**
+   * Display text for a cell: the value EXACTLY as it was uploaded.
+   *
+   * Deliberately not isBlank() — tokens like "----", "N.I. High" and "No Peak"
+   * are real instrument output that the criteria treat as "no numeric value",
+   * but they must still be shown to the user as themselves. Only a genuinely
+   * absent cell renders as a dash.
+   */
+  function displayValue(v) {
+    if (v === null || v === undefined) return '';
+    return String(v);
+  }
+  function isEmptyCell(v) {
+    return v === null || v === undefined || String(v) === '';
+  }
+
   function isBlank(v) {
     if (v === null || v === undefined) return true;
     var s = String(v).trim();
@@ -473,7 +489,7 @@
     icon: icon, ICON_PATHS: ICON_PATHS,
     parseCSV: parseCSV, parseCSVRows: parseCSVRows, parseTable: parseTable, toCSV: toCSV, downloadText: downloadText,
     MISSING_TOKENS: MISSING_TOKENS, setMissingTokens: setMissingTokens,
-    isBlank: isBlank, isNumeric: isNumeric, isDateLike: isDateLike, isBoolLike: isBoolLike,
+    isBlank: isBlank, displayValue: displayValue, isEmptyCell: isEmptyCell, isNumeric: isNumeric, isDateLike: isDateLike, isBoolLike: isBoolLike,
     toNumber: toNumber, toBool: toBool, parseDate: parseDate, decimalsOf: decimalsOf,
     inferType: inferType, describeFields: describeFields
   };

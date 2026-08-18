@@ -427,7 +427,7 @@
         key: c, label: c, align: f && f.type === 'number' ? 'right' : '',
         render: function (row) {
           var v = row[c];
-          return U.isBlank(v) ? '<span class="muted">—</span>' : esc(String(v));
+          return U.isEmptyCell(v) ? '<span class="muted">—</span>' : esc(U.displayValue(v));
         },
         value: function (row) { return row[c]; }
       });

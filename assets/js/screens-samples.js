@@ -483,6 +483,23 @@
     });
   };
 
+  /**
+   * One uploaded column, rendered exactly as it arrived — no rounding, no unit
+   * juggling, no substitution. Only a genuinely empty cell shows a dash.
+   */
+  function rawColumn(a, name) {
+    var field = (a.fields || []).filter(function (f) { return f.name === name; })[0];
+    return {
+      key: name, label: name,
+      align: field && field.type === 'number' ? 'right' : '',
+      value: function (r) { return r[name]; },
+      render: function (r) {
+        var v = r[name];
+        return U.isEmptyCell(v) ? '<span class="muted">—</span>' : esc(U.displayValue(v));
+      }
+    };
+  }
+
   /* ============================================================
      SELECTION TABLE (§4 / §5)
      ============================================================ */
@@ -504,6 +521,7 @@
 
     var map = Store.columnMapOf(a);
     var idCol = map.sampleId, typeCol = map.sampleType;
+    var allCols = Store.columnsOf(a);
     var base = Store.baseStreamOf(a);
     var current = Store.groups(a);
 
@@ -598,21 +616,18 @@
       render: function (r) { return '<span class="mono" style="font-size:11.5px">' + esc(r.__src || '') + '</span>'; }
     });
 
-    /* a couple of informative numeric columns, if the file has them */
-    [['percentDiff', '% Diff'], ['concentration', 'Conc.']].forEach(function (pair) {
-      var col = map[pair[0]];
-      if (!col) return;
-      columns.push({
-        key: col, label: col, align: 'right',
-        value: function (r) { return r[col]; }
-      });
+    /* every remaining uploaded column, in the file's own order, shown verbatim.
+       The table scrolls sideways and `Columns` hides whatever is not needed. */
+    Store.columnsOf(a).forEach(function (c) {
+      if (c === idCol || c === typeCol) return;          // already shown above
+      columns.push(rawColumn(a, c));
     });
 
     var table = UI.dataTable({
       rows: recs, columns: columns, unit: 'rows', pageSize: 25, columnToggle: true,
-      searchPlaceholder: 'Search sample ID, type or file…',
+      searchPlaceholder: 'Search any column…',
       searchText: function (r) {
-        return [idCol ? r[idCol] : '', typeCol ? r[typeCol] : '', r.__src].join(' ');
+        return allCols.map(function (c) { return r[c]; }).join(' ') + ' ' + r.__src;
       },
       defaultFilter: opts.filter || 'all',
       filters: [
@@ -693,7 +708,7 @@
     var g = Store.groups(a);
     var map = Store.columnMapOf(a);
     var idCol = map.sampleId;
-    var cols = Store.columnsOf(a).slice(0, 8);
+    var cols = Store.columnsOf(a);
 
     var body = el('div', {});
     body.innerHTML = UI.alertBox('info', U.fmtInt(g.patient.length) + ' patient record(s)',
@@ -708,7 +723,7 @@
     }];
     cols.forEach(function (c) {
       if (c === idCol) return;
-      columns.push({ key: c, label: c, value: function (r) { return r[c]; } });
+      columns.push(rawColumn(a, c));
     });
 
     body.appendChild(UI.dataTable({
@@ -858,6 +873,27 @@
       }
     });
     columns.push({ key: 'src', label: 'Source file', value: function (r) { return r.src; } });
+
+    /* the record's other uploaded columns, verbatim — hidden behind `Columns`
+       by default so the verdict stays readable, but all present */
+    var recs = Store.recordsOf(a);
+    var idCol = Store.columnMapOf(a).sampleId;
+    var ruleFields = rules.map(function (x) { return x.field; });
+    var extraCols = [];
+    Store.columnsOf(a).forEach(function (c) {
+      if (c === idCol || ruleFields.indexOf(c) > -1) return;
+      extraCols.push(c);
+      var col = rawColumn(a, c);
+      columns.push({
+        key: col.key, label: col.label, align: col.align,
+        value: function (r) { var rec = recs[r.i] || {}; return rec[c]; },
+        render: function (r) {
+          var rec = recs[r.i] || {};
+          return U.isEmptyCell(rec[c]) ? '<span class="muted">—</span>' : esc(U.displayValue(rec[c]));
+        }
+      });
+    });
+
     columns.push({
       key: 'actions', label: '', sortable: false,
       render: function (r) {
@@ -873,8 +909,12 @@
     return UI.dataTable({
       title: Store.streamLabel(stream) + ' validation',
       rows: res.records || [], columns: columns, unit: 'records', pageSize: 10, columnToggle: true,
-      searchPlaceholder: 'Search sample ID…',
-      searchText: function (r) { return r.sampleId + ' ' + r.src; },
+      hiddenColumns: extraCols,
+      searchPlaceholder: 'Search any column…',
+      searchText: function (r) {
+        var rec = recs[r.i] || {};
+        return r.sampleId + ' ' + r.src + ' ' + extraCols.map(function (c) { return rec[c]; }).join(' ');
+      },
       rowClass: function (r) { return r.status === 'fail' ? 'row-fail' : ''; },
       defaultFilter: 'all',
       filters: [
