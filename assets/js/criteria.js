@@ -157,11 +157,11 @@
     },
     {
       key: 'concentration_cutoff',
-      name: 'Remove Concentrations Below Cut-off',
-      description: 'Replaces any patient concentration below the assay cut-off with zero. The cut-off is taken from the cut-off control row (Std. Conc.) unless a fixed value is configured.',
+      name: 'Flag Concentrations Below Cut-off',
+      description: 'Flags any patient concentration below the assay cut-off. The uploaded value is left untouched — enable "Rewrite value to 0" only if the downstream LIS expects a zeroed result. The cut-off is taken from the cut-off control row (Std. Conc.) unless a fixed value is configured.',
       stream: 'patient', role: 'concentration',
-      defaults: { operator: 'lt', threshold: null, unit: 'ng/mL', severity: 'transform' },
-      calculation: 'Conc. < cut-off  →  Conc. = 0',
+      defaults: { operator: 'lt', threshold: null, unit: 'ng/mL', severity: 'warning', rewriteValues: false },
+      calculation: 'Conc. < cut-off  →  flag (value preserved)',
       derivedLabel: 'Cut-off',
       evaluate: function (row, cfg, ctx) {
         var col = ctx.map[cfg.role];
@@ -173,8 +173,14 @@
         var v = U.toNumber(raw);
         if (isNaN(v)) return fail('Concentration "' + raw + '" is not numeric', col, { actual: raw, expected: 'numeric value' });
         if (flagged(v, cfg.operator, cut)) {
-          return transform(col, 0, 'Concentration ' + U.fmtNum(v, 4) + ' is below the ' +
-            U.fmtNum(cut, 4) + ' ng/mL cut-off — reported as 0', { actual: v, min: cut });
+          var band = { actual: v, min: cut };
+          // Default is non-destructive: report the finding, leave the uploaded value alone.
+          if (cfg.rewriteValues === true) {
+            return transform(col, 0, 'Concentration ' + U.fmtNum(v, 4) + ' is below the ' +
+              U.fmtNum(cut, 4) + ' ng/mL cut-off — rewritten to 0', band);
+          }
+          return flag(cfg.severity, 'Concentration ' + U.fmtNum(v, 4) + ' is below the ' +
+            U.fmtNum(cut, 4) + ' ng/mL cut-off', col, band);
         }
         return pass();
       }
@@ -184,7 +190,7 @@
       name: 'Check Ion Ratio',
       description: 'Flags patient samples whose qualifier/quantifier ion ratio falls outside the range established by the calibrators, widened by the analyte’s Reference Ratio Adjustment.',
       stream: 'patient', role: 'ionRatio',
-      defaults: { operator: 'outside', threshold: null, unit: '', severity: 'fail', zeroToCutoff: true },
+      defaults: { operator: 'outside', threshold: null, unit: '', severity: 'fail', rewriteValues: false },
       calculation: 'lowest calibrator ratio × (1 − adjustment)  …  highest calibrator ratio × (1 + adjustment)',
       derivedLabel: 'Acceptable ion-ratio range',
       evaluate: function (row, cfg, ctx) {
@@ -200,8 +206,9 @@
           var res = fail('Ion ratio ' + U.fmtNum(v, 2) + ' is outside the acceptable range ' +
             U.fmtNum(range[0], 2) + ' – ' + U.fmtNum(range[1], 2), col,
             { actual: v, min: range[0], max: range[1] });
-          if (cfg.zeroToCutoff !== false && ctx.map.concentration) {
-            res.transforms = [{ column: ctx.map.concentration, value: 0, note: 'Non-conforming ion ratio — concentration reported as 0' }];
+          // Non-destructive by default — the row is flagged, the value is kept.
+          if (cfg.rewriteValues === true && ctx.map.concentration) {
+            res.transforms = [{ column: ctx.map.concentration, value: 0, note: 'Non-conforming ion ratio — concentration rewritten to 0' }];
           }
           return res;
         }

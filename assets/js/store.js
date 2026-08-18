@@ -65,7 +65,10 @@
      Persistence — records are bulky, so they are re-derivable
      (seeded analytics regenerate; large uploads stay in memory).
      ------------------------------------------------------------ */
-  function persistable() {
+  /** Seeded demo files regenerate deterministically; uploaded files cannot. */
+  function isSeedFile(f) { return String(f.id).indexOf('seedfile_') === 0; }
+
+  function persistable(includeRecords) {
     var copy = {
       user: S.user, loggedIn: S.loggedIn, notifications: S.notifications.slice(0, 40),
       activityLog: S.activityLog.slice(0, 400), ui: S.ui, settings: S.settings,
@@ -77,7 +80,9 @@
         }
         b.files = (b.files || []).map(function (f) {
           var g = Object.assign({}, f);
-          delete g.records;                // bulk rows are re-derivable
+          // Uploaded rows ARE the user's data — they have no other source, so they
+          // are stored verbatim. Demo rows are dropped and regenerated on load.
+          if (!includeRecords || isSeedFile(f)) delete g.records;
           return g;
         });
         b.patientTesting = Object.assign({}, b.patientTesting);
@@ -93,8 +98,19 @@
   }
 
   function save() {
-    try { localStorage.setItem(KEY, JSON.stringify(persistable())); }
-    catch (e) { /* quota — the prototype keeps working from memory */ }
+    try {
+      localStorage.setItem(KEY, JSON.stringify(persistable(true)));
+      S.storageDegraded = false;
+      return true;
+    } catch (e) {
+      // Over quota with the rows included — keep everything else rather than
+      // losing the whole session, and flag that uploads will not survive a reload.
+      try {
+        localStorage.setItem(KEY, JSON.stringify(persistable(false)));
+        S.storageDegraded = true;
+      } catch (e2) { /* the prototype keeps working from memory */ }
+      return false;
+    }
   }
 
   function load() {
@@ -116,22 +132,34 @@
         a.analyteScope = a.analyteScope || { field: '', values: [], applied: false, detected: [] };
         a.selectedFields = a.selectedFields || [];
         a.sampleOverrides = a.sampleOverrides || {};
+        a.streamRules = a.streamRules || {};
         a.streamTests = a.streamTests || null;
         return a;
       });
-      // restore record sets for anything derived from the demo generator
+      // demo files regenerate; uploaded files were stored with their rows intact
       S.analytics.forEach(function (a) {
         if (a.seed && a.files.length) attachSeedRecords(a);
-        else if (a.files.length) {
-          // a user-uploaded file cannot be rebuilt after a reload
-          a.files = []; a.file = null; a.fields = [];
-          a.classification = { field: '', control: '', calibration: '', patient: '', applied: false, counts: null, suggested: null };
-          a.analyteScope = { field: '', values: [], applied: false, detected: [] };
-          a.selectedFields = []; a.rules = a.rules || [];
-          a.sampleOverrides = {};      // row keys no longer resolve without the rows
+        invalidateMergeCache(a);
+        if (!a.files.length) return;
+
+        // only drop files whose rows really are gone (saved while over quota)
+        var lost = a.files.filter(function (f) { return !f.records || !f.records.length; });
+        if (lost.length) {
+          a.files = a.files.filter(function (f) { return f.records && f.records.length; });
+          Object.keys(a.sampleOverrides || {}).forEach(function (k) {
+            if (lost.some(function (f) { return k.indexOf(f.id + ':') === 0; })) delete a.sampleOverrides[k];
+          });
           a.streamTests = null;
         }
         invalidateMergeCache(a);
+        if (a.files.length) refreshFields(a);
+        else {
+          a.file = null; a.fields = [];
+          a.classification = { field: '', control: '', calibration: '', patient: '', applied: false, counts: null, suggested: null };
+          a.analyteScope = { field: '', values: [], applied: false, detected: [] };
+          a.selectedFields = []; a.rules = a.rules || [];
+          a.sampleOverrides = {}; a.streamTests = null;
+        }
       });
       return S.analytics.length > 0;
     } catch (e) { return false; }
@@ -171,6 +199,7 @@
         patterns: null
       },
       sampleOverrides: {},       // "fileId:rowIndex" → stream — the user's manual selection
+      streamRules: {},           // per-stream min/max rules keyed by stream
       streamTests: null,         // last Test Calibration / Test Controls dry run
       /* --- LISA analyte / assay configuration --- */
       assay: {
@@ -1567,6 +1596,202 @@
     return { runs: runs, summary: a.processing.summary };
   }
 
+  /* ------------------------------------------------------------
+     Sample file template (STEP 2)
+     ------------------------------------------------------------ */
+  /**
+   * The blank workbook an analyte expects: the LISA column set plus a few
+   * illustrative rows covering all three sample streams. Once files have been
+   * uploaded the template follows THEIR columns instead, so a re-download
+   * always matches what this analyte actually works with.
+   */
+  var TEMPLATE_COLUMNS = [
+    'Sample ID', 'Sample Type', 'Analyte', '% Diff', 'ISTD Area', '% Recovery',
+    'Average % Recovery', 'Conc. (ng/mL)', 'Std. Conc. (ng/mL)',
+    'Ref 1 Actual Ratio', 'Ref 1 Set Ratio', 'Found RT'
+  ];
+
+  function sampleTemplate(a) {
+    var cols = (a && a.files && a.files.length) ? columnsOf(a) : TEMPLATE_COLUMNS.slice();
+    cols = cols.filter(function (c) { return String(c).slice(0, 2) !== '__'; });
+    var analyte = (a && (a.assay && a.assay.analyteName)) || (a && a.name) || 'Analyte';
+
+    var examples = [];
+    function row(id, type, vals) {
+      var o = {};
+      cols.forEach(function (c) { o[c] = ''; });
+      o[pick(cols, /sample\s*id/i)] = id;
+      o[pick(cols, /sample\s*type/i)] = type;
+      var an = pick(cols, /analyte|analytics|compound|test/i);
+      if (an) o[an] = analyte;
+      Object.keys(vals).forEach(function (re) {
+        var c = pick(cols, new RegExp(re, 'i'));
+        if (c) o[c] = vals[re];
+      });
+      delete o[undefined];
+      examples.push(o);
+    }
+    for (var i = 1; i <= 7; i++) {
+      row('Cal_' + i, 'Standard', {
+        'diff': (i % 3 === 0 ? 8.4 : -4.2), 'istd\\s*area': 154000 + i * 900,
+        '^conc|concentration': (i * 12.5).toFixed(2), 'std\\.?\\s*conc|nominal': (i * 12.5).toFixed(2),
+        'actual\\s*ratio': (38 + i * 1.4).toFixed(2), 'set\\s*ratio': '42.00',
+        'found\\s*rt|retention': (4.31 + i * 0.01).toFixed(3)
+      });
+    }
+    ['WCS1', 'WCS2', 'WCS3'].forEach(function (id, i) {
+      row(id, 'Control', {
+        'diff': (i === 1 ? 26.4 : 6.1), 'istd\\s*area': 151000 + i * 700,
+        '^conc|concentration': (25 + i * 25).toFixed(2), 'std\\.?\\s*conc|nominal': (25 + i * 25).toFixed(2),
+        'actual\\s*ratio': (40 + i * 1.1).toFixed(2), 'set\\s*ratio': '42.00',
+        'found\\s*rt|retention': (4.35 + i * 0.02).toFixed(3)
+      });
+    });
+    ['1001', '1002', '1003'].forEach(function (id, i) {
+      row(id, 'Unknown', {
+        'diff': '', 'istd\\s*area': 149500 + i * 1200,
+        '^conc|concentration': (i === 2 ? 0.08 : 34.7 + i * 9).toFixed(2), 'std\\.?\\s*conc|nominal': '',
+        'actual\\s*ratio': (i === 1 ? 61.4 : 41.9).toFixed(2), 'set\\s*ratio': '42.00',
+        'found\\s*rt|retention': (4.34 + i * 0.03).toFixed(3)
+      });
+    });
+    return { columns: cols, rows: examples };
+  }
+
+  function pick(cols, re) {
+    var hit = cols.filter(function (c) { return re.test(c); })[0];
+    return hit || null;
+  }
+
+  function sampleTemplateName(a) {
+    var base = ((a && (a.code || a.name)) || 'analytics').replace(/[^A-Za-z0-9]+/g, '_');
+    return base + '_Sample_Template.csv';
+  }
+
+  /* ------------------------------------------------------------
+     Per-stream min/max rules
+
+     A deliberately simple rule model sitting alongside the criteria module:
+     pick a column, give it a minimum and/or a maximum, and every record in
+     that stream is checked against it. Nothing is hardcoded — the field and
+     the limits are whatever the user configures, and the suggested defaults
+     are read from the calibrators actually present in the uploaded files.
+     ------------------------------------------------------------ */
+  function streamRulesOf(a, stream) {
+    a.streamRules = a.streamRules || {};
+    a.streamRules[stream] = a.streamRules[stream] || [];
+    return a.streamRules[stream];
+  }
+
+  /** A starter rule for a stream: the ion-ratio column, limits from the calibrators. */
+  function suggestStreamRule(a, stream) {
+    var map = columnMapOf(a);
+    var field = map.ionRatio || map.percentDiff || null;
+    if (!field) {
+      var numeric = (a.fields || []).filter(function (f) { return f.type === 'number'; })[0];
+      field = numeric ? numeric.name : null;
+    }
+    var rule = { id: U.uid('srule'), field: field, min: null, max: null, enabled: true };
+    if (!field) return rule;
+    var g = groups(a);
+    var basis = g.calibration.length ? g.calibration : (g.control.length ? g.control : g.patient);
+    var vals = basis.map(function (r) { return U.toNumber(r[field]); })
+      .filter(function (v) { return !isNaN(v) && v !== 0; });
+    if (vals.length) {
+      rule.min = Number(Math.min.apply(null, vals).toFixed(2));
+      rule.max = Number(Math.max.apply(null, vals).toFixed(2));
+    }
+    return rule;
+  }
+
+  function saveStreamRule(a, stream, rule, reason) {
+    var list = streamRulesOf(a, stream);
+    var existing = list.filter(function (r) { return r.id === rule.id; })[0];
+    var before = existing ? describeStreamRule(existing) : null;
+    if (existing) Object.assign(existing, rule);
+    else { rule.id = rule.id || U.uid('srule'); rule.createdAt = new Date().toISOString(); list.push(rule); }
+    audit(a, {
+      action: existing ? 'Stream rule modified' : 'Stream rule created',
+      detail: streamLabel(stream) + ' — ' + describeStreamRule(existing || rule),
+      prev: before, next: describeStreamRule(existing || rule),
+      reason: reason || '', kind: existing ? 'warn' : 'info'
+    });
+    afterStreamRuleChange(a, stream, reason);
+    return existing || rule;
+  }
+
+  function deleteStreamRule(a, stream, id, reason) {
+    var list = streamRulesOf(a, stream);
+    var r = list.filter(function (x) { return x.id === id; })[0];
+    if (!r) return;
+    a.streamRules[stream] = list.filter(function (x) { return x.id !== id; });
+    audit(a, {
+      action: 'Stream rule deleted', detail: streamLabel(stream) + ' — ' + describeStreamRule(r),
+      prev: describeStreamRule(r), reason: reason || '', kind: 'bad'
+    });
+    afterStreamRuleChange(a, stream, reason);
+  }
+
+  function toggleStreamRule(a, stream, id) {
+    var r = streamRulesOf(a, stream).filter(function (x) { return x.id === id; })[0];
+    if (!r) return null;
+    r.enabled = r.enabled === false;
+    audit(a, {
+      action: r.enabled ? 'Stream rule enabled' : 'Stream rule disabled',
+      detail: streamLabel(stream) + ' — ' + describeStreamRule(r), kind: 'warn'
+    });
+    afterStreamRuleChange(a, stream);
+    return r;
+  }
+
+  function describeStreamRule(r) {
+    if (!r) return '';
+    var hasMin = r.min !== null && r.min !== undefined && r.min !== '';
+    var hasMax = r.max !== null && r.max !== undefined && r.max !== '';
+    var band = hasMin && hasMax ? 'between ' + r.min + ' and ' + r.max
+      : hasMax ? 'at most ' + r.max
+        : hasMin ? 'at least ' + r.min : 'no limits set';
+    return '[' + (r.field || 'no column') + '] ' + band;
+  }
+
+  /** A rule change re-versions the configuration and invalidates the QC tests. */
+  function afterStreamRuleChange(a, stream, reason) {
+    a.streamTests = null;
+    var assay = assayOf(a);
+    assay.criteriaVersion = bumpVersion(assay.criteriaVersion);
+    invalidateProcessing(a, 'Stream rules changed');
+    invalidateApproval(a, streamLabel(stream) + ' rules changed', { reason: reason });
+    touch(a);
+  }
+
+  /** Evaluate one record against a stream rule. Values are only read, never written. */
+  function checkStreamRule(rec, rule) {
+    var raw = rec[rule.field];
+    var out = {
+      field: rule.field, actual: raw, min: rule.min, max: rule.max,
+      rule: describeStreamRule(rule), ruleId: rule.id, status: 'pass', reason: ''
+    };
+    var hasMin = rule.min !== null && rule.min !== undefined && rule.min !== '' && !isNaN(parseFloat(rule.min));
+    var hasMax = rule.max !== null && rule.max !== undefined && rule.max !== '' && !isNaN(parseFloat(rule.max));
+    if (!rule.field) { out.status = 'skip'; out.reason = 'No column selected'; return out; }
+    if (!hasMin && !hasMax) { out.status = 'skip'; out.reason = 'No minimum or maximum configured'; return out; }
+    if (U.isBlank(raw)) { out.status = 'skip'; out.reason = 'No value reported'; return out; }
+    var v = U.toNumber(raw);
+    if (isNaN(v)) {
+      out.status = 'fail';
+      out.reason = '"' + raw + '" is not a number';
+      return out;
+    }
+    if (hasMin && v < parseFloat(rule.min)) {
+      out.status = 'fail';
+      out.reason = U.fmtNum(v, 4) + ' is below the minimum ' + rule.min;
+    } else if (hasMax && v > parseFloat(rule.max)) {
+      out.status = 'fail';
+      out.reason = U.fmtNum(v, 4) + ' is above the maximum ' + rule.max;
+    }
+    return out;
+  }
+
   /**
    * Test ONE sample stream against the criteria — the "Test Calibration" /
    * "Test Controls" preview. Only the chosen stream's rows are evaluated, but
@@ -1597,9 +1822,45 @@
       });
     });
 
+    /* the stream's own min/max rules, evaluated per record */
+    var rules = streamRulesOf(a, stream).filter(function (r) { return r.enabled !== false; });
+    var byRow = {};
+    res.rows.forEach(function (r) { byRow[r.row.__i] = r; });
+
+    var records = rows.map(function (rec) {
+      var criteriaRow = byRow[rec.__i];
+      var checks = rules.map(function (rule) { return checkStreamRule(rec, rule); });
+      var ruleFailed = checks.filter(function (c) { return c.status === 'fail'; });
+      var critFailed = criteriaRow ? (criteriaRow.failures || []).length : 0;
+      return {
+        i: rec.__i, row: rec.__row, fid: rec.__fid, src: rec.__src,
+        sampleId: idCol ? String(rec[idCol]) : 'Row ' + (rec.__row + 1),
+        checks: checks,
+        status: (ruleFailed.length || critFailed) ? 'fail'
+          : (criteriaRow && (criteriaRow.warnings || []).length) ? 'warning' : 'pass'
+      };
+    });
+
+    /* rule failures join the criteria findings in the same failed-record table */
+    records.forEach(function (rec) {
+      rec.checks.forEach(function (c) {
+        if (c.status !== 'fail') return;
+        failures.push({
+          i: rec.i, sampleId: rec.sampleId, src: rec.src, field: c.field,
+          actual: c.actual, min: c.min, max: c.max, expected: Criteria.expectedLabel(c),
+          rule: c.rule, criterion: 'stream_rule', reason: c.reason, severity: 'fail'
+        });
+      });
+    });
+
+    var failedRecords = records.filter(function (r) { return r.status === 'fail'; }).length;
     var summary = {
       stream: stream, streamKey: key,
-      total: res.total, passed: res.passed, failed: res.failed, warnings: res.warnings,
+      total: records.length,
+      passed: records.filter(function (r) { return r.status === 'pass'; }).length,
+      failed: failedRecords,
+      warnings: records.filter(function (r) { return r.status === 'warning'; }).length,
+      records: records, rules: rules.slice(),
       failures: failures, derived: ctx.derived,
       criteriaVersion: assayOf(a).criteriaVersion,
       fileId: fileId || null, ranAt: new Date().toISOString()
@@ -1608,9 +1869,10 @@
     a.streamTests[stream] = summary;
     audit(a, {
       action: 'Test ' + (stream === 'calibration' ? 'Calibration' : 'Controls') + ' run',
-      detail: U.fmtInt(res.total) + ' ' + stream + ' record(s) — ' + U.fmtInt(res.passed) +
-        ' passed, ' + U.fmtInt(res.failed) + ' failed · criteria v' + summary.criteriaVersion,
-      kind: res.failed ? 'bad' : 'ok'
+      detail: U.fmtInt(summary.total) + ' ' + stream + ' record(s) — ' + U.fmtInt(summary.passed) +
+        ' passed, ' + U.fmtInt(summary.failed) + ' failed · ' + rules.length + ' min/max rule(s)' +
+        ' · criteria v' + summary.criteriaVersion,
+      kind: summary.failed ? 'bad' : 'ok'
     });
     touch(a);
     return summary;
@@ -1670,14 +1932,20 @@
   /* ---------- per-file outputs ---------- */
 
   /**
-   * The processed ("passed") file: every row that passed, with the criteria
-   * transformations applied — this is the dataset that goes back to the LIS.
+   * The passed file: every row that passed, exactly as it was uploaded.
+   *
+   * The uploaded values are never altered here — the file keeps its OWN column
+   * order and its own values, so what comes out matches what went in. The only
+   * values that can differ are ones the user corrected by hand on screen, which
+   * are recorded in the audit trail. Criteria findings live in the exceptions
+   * report, not in this file.
    */
   function passedOutput(a, fileId) {
     var run = runOf(a, fileId);
     if (!run) return null;
+    var file = (a.files || []).filter(function (f) { return f.id === fileId; })[0];
     var recs = recordsOf(a);
-    var cols = columnsOf(a);
+    var cols = (file && file.columns && file.columns.length) ? file.columns.slice() : columnsOf(a);
     var rows = [];
     run.rows.forEach(function (r) {
       if (r.status === 'fail') return;
@@ -1685,23 +1953,22 @@
       if (!rec) return;
       var out = {};
       cols.forEach(function (c) { out[c] = rec[c] === undefined ? '' : rec[c]; });
-      (r.transforms || []).forEach(function (t) { out[t.column] = t.value; });
-      out['LISA Status'] = r.status === 'warning' ? 'PASS (warning)' : 'PASS';
-      out['LISA Adjustments'] = (r.transforms || []).map(function (t) { return t.column + '→' + t.value; }).join('; ');
       rows.push(out);
     });
-    return { columns: cols.concat(['LISA Status', 'LISA Adjustments']), rows: rows, run: run };
+    return { columns: cols, rows: rows, run: run };
   }
 
   /** The exceptions report: one row per failed/flagged criterion. */
   function exceptionsOutput(a, fileId) {
     var run = runOf(a, fileId);
     if (!run) return null;
+    var file = (a.files || []).filter(function (f) { return f.id === fileId; })[0];
     var recs = recordsOf(a);
-    var cols = columnsOf(a);
-    var meta = ['Analyte', 'Assay', 'Sample Stream', 'Source File', 'Criterion', 'Failed Column',
-      'Failure Reason', 'Severity', 'Criteria Version', 'Processed At'];
+    var cols = (file && file.columns && file.columns.length) ? file.columns.slice() : columnsOf(a);
+    var meta = ['Analyte', 'Assay', 'Sample Stream', 'Source File', 'Sample ID', 'Criterion', 'Failed Column',
+      'Actual Value', 'Minimum', 'Maximum', 'Failure Reason', 'Severity', 'Criteria Version', 'Processed At'];
     var assay = assayOf(a);
+    var idCol = columnMapOf(a).sampleId;
     var rows = [];
     run.rows.forEach(function (r) {
       var issues = (r.failures || []).concat(r.warnings || []);
@@ -1714,8 +1981,12 @@
         line['Assay'] = assay.assayName || a.name;
         line['Sample Stream'] = U.titleCase(f.stream || '');
         line['Source File'] = run.fileName;
+        line['Sample ID'] = idCol && rec[idCol] !== undefined ? rec[idCol] : '';
         line['Criterion'] = f.name;
         line['Failed Column'] = f.column;
+        line['Actual Value'] = f.actual === undefined || f.actual === null ? '' : f.actual;
+        line['Minimum'] = f.min === undefined || f.min === null ? '' : f.min;
+        line['Maximum'] = f.max === undefined || f.max === null ? '' : f.max;
         line['Failure Reason'] = f.reason;
         line['Severity'] = (r.failures || []).indexOf(f) > -1 ? 'Fail' : 'Warning';
         line['Criteria Version'] = 'v' + run.criteriaVersion;
@@ -2175,6 +2446,12 @@
     resetSampleSelection: resetSampleSelection, sampleSelectionSummary: sampleSelectionSummary,
     hasOverrides: hasOverrides, streamLabel: streamLabel, STREAM_KEYS: STREAM_KEYS,
     testStream: testStream, streamGate: streamGate,
+    /* per-stream min/max rules */
+    sampleTemplate: sampleTemplate, sampleTemplateName: sampleTemplateName, TEMPLATE_COLUMNS: TEMPLATE_COLUMNS,
+    streamRulesOf: streamRulesOf, suggestStreamRule: suggestStreamRule,
+    saveStreamRule: saveStreamRule, deleteStreamRule: deleteStreamRule,
+    toggleStreamRule: toggleStreamRule, describeStreamRule: describeStreamRule,
+    checkStreamRule: checkStreamRule,
     selectedFields: selectedFields, fieldsConfirmed: fieldsConfirmed, isFieldSelected: isFieldSelected,
     setSelectedFields: setSelectedFields, activeRules: activeRules,
     detectAnalytes: detectAnalytes, analyticsByFile: analyticsByFile, applyAnalyteScope: applyAnalyteScope,

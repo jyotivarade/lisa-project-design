@@ -106,6 +106,12 @@
       body.appendChild(resetRow);
     }
 
+    /* min/max rule configuration, per stream */
+    var ruleGrid = el('div', { class: 'grid g2 mt4' });
+    ruleGrid.appendChild(streamRulesCard(a, STREAMS.calibration));
+    ruleGrid.appendChild(streamRulesCard(a, STREAMS.control));
+    body.appendChild(ruleGrid);
+
     /* QC preview — Test Calibration / Test Controls */
     body.appendChild(qcTestCard(a));
 
@@ -311,6 +317,171 @@
       stale: 'badge-warn', untested: 'badge-neutral', none: 'badge-neutral'
     }[state] || 'badge-neutral';
   }
+
+
+  /* ============================================================
+     STREAM RULE CONFIGURATION (STEP 5 / STEP 6)
+     ============================================================ */
+  /** Min/max rules for one stream, listed with add / edit / delete. */
+  function streamRulesCard(a, def) {
+    var rules = Store.streamRulesOf(a, def.key);
+    var wrap = el('div', {});
+
+    if (!rules.length) {
+      wrap.appendChild(el('p', {
+        class: 'muted', style: 'font-size:12.5px;line-height:1.6',
+        text: 'No ' + def.label.toLowerCase() + ' rule configured yet. A rule picks one column and gives it a ' +
+          'minimum and/or a maximum — every ' + def.label.toLowerCase() + ' record is then checked against it.'
+      }));
+    } else {
+      var t = el('div', { class: 'table-scroll' });
+      t.innerHTML = '<table class="tbl compact"><thead><tr><th>Field</th><th class="num">Minimum</th>' +
+        '<th class="num">Maximum</th><th>Status</th><th></th></tr></thead><tbody>' +
+        rules.map(function (r) {
+          return '<tr data-rule="' + esc(r.id) + '">' +
+            '<td class="cell-strong">' + esc(r.field || '— no column —') + '</td>' +
+            '<td class="num mono">' + (r.min === null || r.min === '' ? '<span class="muted">—</span>' : esc(String(r.min))) + '</td>' +
+            '<td class="num mono">' + (r.max === null || r.max === '' ? '<span class="muted">—</span>' : esc(String(r.max))) + '</td>' +
+            '<td><span class="badge ' + (r.enabled === false ? 'badge-neutral' : 'badge-success') + '">' +
+            (r.enabled === false ? 'OFF' : 'ON') + '</span></td>' +
+            '<td class="act"></td></tr>';
+        }).join('') + '</tbody></table>';
+      U.$$('tr[data-rule]', t).forEach(function (tr) {
+        var id = tr.dataset.rule;
+        var cell = U.$('.act', tr);
+        cell.appendChild(UI.iconBtn('edit', 'Edit rule', function () {
+          Screens.streamRuleBuilder(a, def.key, id);
+        }));
+        cell.appendChild(UI.iconBtn('trash', 'Delete rule', function () {
+          UI.confirm({
+            title: 'Delete this rule?', danger: true, confirmLabel: 'Delete',
+            message: 'The ' + def.label.toLowerCase() + ' records will no longer be checked against it.'
+          }).then(function (ok) {
+            if (!ok) return;
+            Store.deleteStreamRule(a, def.key, id, '');
+            UI.toast({ kind: 'info', title: 'Rule deleted' });
+            App.render();
+          });
+        }));
+      });
+      wrap.appendChild(t);
+    }
+
+    var row = el('div', { class: 'row mt3' });
+    row.appendChild(UI.btn('Add ' + def.label + ' Rule', 'btn-secondary btn-sm', function () {
+      Screens.streamRuleBuilder(a, def.key, null);
+    }, { icon: 'plus', iconSize: 14 }));
+    row.appendChild(UI.btn('Test ' + def.label, 'btn-primary btn-sm', function () {
+      Screens.streamTest(a, def.key);
+    }, { icon: 'bolt', iconSize: 14 }));
+    wrap.appendChild(row);
+
+    return Screens.card({
+      title: def.label + ' Rules',
+      badge: '<span class="badge badge-' + def.tone + '">' + rules.length + ' rule' + (rules.length === 1 ? '' : 's') + '</span>',
+      body: wrap
+    });
+  }
+
+  /** Field + Minimum + Maximum. Limits are always editable, never hardcoded. */
+  Screens.streamRuleBuilder = function (a, stream, ruleId) {
+    var def = STREAMS[stream];
+    var list = Store.streamRulesOf(a, stream);
+    var existing = ruleId ? list.filter(function (r) { return r.id === ruleId; })[0] : null;
+    var draft = existing ? U.clone(existing) : Store.suggestStreamRule(a, stream);
+
+    var numericFields = (a.fields || []).filter(function (f) { return f.type === 'number'; });
+    var fieldOptions = (numericFields.length ? numericFields : (a.fields || [])).map(function (f) {
+      return { value: f.name, label: f.name };
+    });
+
+    var body = el('div', {});
+    body.innerHTML = UI.alertBox('info', def.label + ' rule',
+      'The record’s value in the chosen column must sit between the minimum and the maximum. ' +
+      'Leave one blank to bound only the other side. Both limits are editable at any time.');
+
+    var fieldSel = UI.fieldGroup({
+      label: 'Field', type: 'select', value: draft.field || '',
+      options: [{ value: '', label: '— select a column —' }].concat(fieldOptions),
+      hint: 'Columns are read from the uploaded files, so this list follows whatever you uploaded.',
+      onChange: function () { draft.field = fieldSel.input.value; refreshStats(); }
+    });
+    var minIn = UI.fieldGroup({
+      label: 'Minimum Value', type: 'number', value: draft.min === null || draft.min === undefined ? '' : draft.min,
+      placeholder: 'e.g. 32.66',
+      onInput: function () { draft.min = minIn.input.value === '' ? null : parseFloat(minIn.input.value); refreshStats(); }
+    });
+    var maxIn = UI.fieldGroup({
+      label: 'Maximum Value', type: 'number', value: draft.max === null || draft.max === undefined ? '' : draft.max,
+      placeholder: 'e.g. 49.96',
+      onInput: function () { draft.max = maxIn.input.value === '' ? null : parseFloat(maxIn.input.value); refreshStats(); }
+    });
+
+    body.appendChild(el('div', { class: 'form-grid mt4' }, [fieldSel]));
+    body.appendChild(el('div', { class: 'form-grid two mt3' }, [minIn, maxIn]));
+
+    var stats = el('div', { class: 'mt4' });
+    body.appendChild(stats);
+
+    function refreshStats() {
+      var g = Store.groups(a);
+      var list2 = stream === 'calibration' ? g.calibration : g.control;
+      if (!draft.field || !list2.length) { stats.innerHTML = ''; return; }
+      var vals = list2.map(function (r) { return U.toNumber(r[draft.field]); })
+        .filter(function (v) { return !isNaN(v); });
+      if (!vals.length) { stats.innerHTML = ''; return; }
+      var lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+      var wouldFail = list2.filter(function (r) {
+        return Store.checkStreamRule(r, draft).status === 'fail';
+      }).length;
+      stats.innerHTML =
+        '<p class="eyebrow mb3">Against the ' + U.fmtInt(list2.length) + ' ' + esc(stream) + ' record(s) currently selected</p>' +
+        '<div class="grid g3">' +
+        UI.metric('Lowest value', U.fmtNum(lo, 3)) +
+        UI.metric('Highest value', U.fmtNum(hi, 3)) +
+        UI.metric('Would fail', U.fmtInt(wouldFail), wouldFail ? 'red' : 'green') +
+        '</div>';
+    }
+    refreshStats();
+
+    var m = UI.modal({
+      title: (existing ? 'Edit' : 'Add') + ' ' + def.label.toLowerCase() + ' rule', size: 'wide', body: body,
+      footer: [
+        el('div', { class: 'left' }, [
+          UI.btn('Use the values in this data', 'btn-ghost btn-sm', function () {
+            var sug = Store.suggestStreamRule(a, stream);
+            draft.field = sug.field; draft.min = sug.min; draft.max = sug.max;
+            fieldSel.input.value = sug.field || '';
+            minIn.input.value = sug.min === null ? '' : sug.min;
+            maxIn.input.value = sug.max === null ? '' : sug.max;
+            refreshStats();
+          }, { icon: 'bolt', iconSize: 13 })
+        ]),
+        UI.btn('Cancel', 'btn-secondary', function () { m.close(); }),
+        UI.btn('Save ' + def.label + ' Rule', 'btn-primary', function () {
+          if (!draft.field) { UI.toast({ kind: 'error', title: 'Select a field first' }); return; }
+          var hasMin = draft.min !== null && draft.min !== '' && !isNaN(draft.min);
+          var hasMax = draft.max !== null && draft.max !== '' && !isNaN(draft.max);
+          if (!hasMin && !hasMax) {
+            UI.toast({ kind: 'error', title: 'Set a limit', text: 'Enter a minimum, a maximum, or both.' });
+            return;
+          }
+          if (hasMin && hasMax && parseFloat(draft.min) > parseFloat(draft.max)) {
+            UI.toast({ kind: 'error', title: 'Minimum is above the maximum' });
+            return;
+          }
+          if (draft.enabled === undefined) draft.enabled = true;
+          Store.saveStreamRule(a, stream, draft, '');
+          m.close();
+          UI.toast({
+            kind: 'success', title: def.label + ' rule saved',
+            text: Store.describeStreamRule(draft) + ' · criteria v' + Store.assayOf(a).criteriaVersion
+          });
+          App.render();
+        }, { icon: 'check' })
+      ]
+    });
+  };
 
   /* ============================================================
      SELECTION TABLE (§4 / §5)
@@ -605,6 +776,7 @@
           '<p>' + U.fmtInt(res.failed) + ' ' + esc(stream) + ' record(s) fall outside the configured limits. ' +
           'Patient testing stays locked until this passes — correct the rule, correct the data, then re-test.</p></div>'
       }));
+      body.appendChild(el('div', { class: 'mt4' }, recordsTable(a, stream, res)));
       body.appendChild(failureTable(a, res));
     } else {
       body.appendChild(el('div', {
@@ -613,6 +785,7 @@
           '<p>All ' + U.fmtInt(res.total) + ' ' + esc(stream) + ' record(s) are within the configured limits ' +
           'on criteria v' + esc(res.criteriaVersion) + '.</p></div>'
       }));
+      body.appendChild(el('div', { class: 'mt4' }, recordsTable(a, stream, res)));
     }
 
     body.appendChild(derivedPanel(res.derived));
@@ -635,6 +808,150 @@
       title: 'Test ' + label + ' — results', size: 'wide', body: body, autofocus: false, footer: footer
     });
   }
+
+  /**
+   * Every record in the stream with its PASS / FAIL verdict (STEP 7 / STEP 9).
+   * Columns follow the configured rules, so the table shows the field, its
+   * minimum and its maximum next to the record's own value.
+   */
+  function recordsTable(a, stream, res) {
+    var rules = res.rules || [];
+    var columns = [{
+      key: 'sampleId', label: 'Sample ID',
+      render: function (r) { return '<span class="cell-strong">' + esc(r.sampleId) + '</span>'; }
+    }];
+
+    rules.forEach(function (rule, i) {
+      columns.push({
+        key: 'v' + i, label: rule.field, align: 'right',
+        value: function (r) { return (r.checks[i] || {}).actual; },
+        render: function (r) {
+          var c = r.checks[i] || {};
+          var v = c.actual === undefined || c.actual === '' ? '—' : String(c.actual);
+          return c.status === 'fail'
+            ? '<span style="color:var(--red-700);font-weight:700">' + esc(v) + '</span>'
+            : esc(v);
+        }
+      });
+      columns.push({
+        key: 'min' + i, label: 'Min', align: 'right', sortable: false,
+        render: function (r) {
+          var c = r.checks[i] || {};
+          return c.min === null || c.min === undefined || c.min === '' ? '<span class="muted">—</span>' : esc(String(c.min));
+        }
+      });
+      columns.push({
+        key: 'max' + i, label: 'Max', align: 'right', sortable: false,
+        render: function (r) {
+          var c = r.checks[i] || {};
+          return c.max === null || c.max === undefined || c.max === '' ? '<span class="muted">—</span>' : esc(String(c.max));
+        }
+      });
+    });
+
+    columns.push({
+      key: 'status', label: 'Status', align: 'center',
+      render: function (r) {
+        var cls = r.status === 'fail' ? 'badge-danger' : r.status === 'warning' ? 'badge-warn' : 'badge-success';
+        var txt = r.status === 'fail' ? 'FAIL' : r.status === 'warning' ? 'WARNING' : 'PASS';
+        return '<span class="badge ' + cls + '">' + txt + '</span>';
+      }
+    });
+    columns.push({ key: 'src', label: 'Source file', value: function (r) { return r.src; } });
+    columns.push({
+      key: 'actions', label: '', sortable: false,
+      render: function (r) {
+        var failing = r.checks.filter(function (c) { return c.status === 'fail'; })[0];
+        var field = failing ? failing.field : (rules[0] && rules[0].field);
+        if (!field) return '';
+        return UI.btn('Edit', r.status === 'fail' ? 'btn-secondary btn-sm' : 'btn-ghost btn-sm', function () {
+          Screens.editStreamValue(a, stream, r, field);
+        }, { icon: 'edit', iconSize: 13 });
+      }
+    });
+
+    return UI.dataTable({
+      title: Store.streamLabel(stream) + ' validation',
+      rows: res.records || [], columns: columns, unit: 'records', pageSize: 10, columnToggle: true,
+      searchPlaceholder: 'Search sample ID…',
+      searchText: function (r) { return r.sampleId + ' ' + r.src; },
+      rowClass: function (r) { return r.status === 'fail' ? 'row-fail' : ''; },
+      defaultFilter: 'all',
+      filters: [
+        { key: 'all', label: 'All', count: (res.records || []).length },
+        { key: 'fail', label: 'Failed', count: res.failed, test: function (r) { return r.status === 'fail'; } },
+        { key: 'pass', label: 'Passed', count: res.passed, test: function (r) { return r.status === 'pass'; } }
+      ],
+      exportName: (a.code || a.name).replace(/[^A-Za-z0-9]+/g, '_') + '_' + stream + '_validation'
+    });
+  }
+
+  /**
+   * Correct one value and re-test immediately (STEP 8 / STEP 10).
+   * This is the ONLY place a value is ever changed, it is always the user
+   * doing it deliberately, and the before/after pair goes to the audit trail.
+   */
+  Screens.editStreamValue = function (a, stream, rec, field) {
+    var record = Store.recordsOf(a)[rec.i];
+    if (!record) return;
+    var check = rec.checks.filter(function (c) { return c.field === field; })[0] || {};
+    var current = record[field];
+
+    var body = el('div', {});
+    body.innerHTML =
+      '<div class="grid g2">' +
+      UI.metric('Sample', esc(rec.sampleId)) +
+      UI.metric('Field', esc(field)) +
+      '</div>' +
+      '<div class="grid g3 mt3">' +
+      UI.metric('Current value', esc(current === undefined || current === '' ? '—' : String(current)),
+        rec.status === 'fail' ? 'red' : '') +
+      UI.metric('Allowed minimum', check.min === null || check.min === undefined ? '—' : esc(String(check.min))) +
+      UI.metric('Allowed maximum', check.max === null || check.max === undefined ? '—' : esc(String(check.max))) +
+      '</div>' +
+      (check.reason ? '<div class="alert alert-danger mt3">' + U.icon('warning', 16) +
+        '<div><div class="alert-t">Why it failed</div><p>' + esc(check.reason) + '</p></div></div>' : '');
+
+    var valIn = UI.fieldGroup({
+      label: 'New Value', value: current === undefined ? '' : String(current),
+      hint: 'Only this one cell changes. Every other field in the file is left exactly as uploaded.'
+    });
+    var reasonIn = UI.fieldGroup({
+      label: 'Reason for the correction', type: 'textarea', rows: 2,
+      placeholder: 'e.g. Transcription error confirmed against the instrument printout'
+    });
+    body.appendChild(el('div', { class: 'mt4' }, [valIn]));
+    body.appendChild(el('div', { class: 'mt3' }, [reasonIn]));
+    body.appendChild(el('p', {
+      class: 'muted mt3', style: 'font-size:12px',
+      text: 'Source file: ' + (rec.src || '—') + ' · row ' + (rec.row + 1) +
+        '. The original value stays in the audit trail.'
+    }));
+
+    var m = UI.modal({
+      title: 'Edit ' + rec.sampleId + ' — ' + field, size: 'narrow', body: body,
+      footer: [
+        UI.btn('Cancel', 'btn-secondary', function () { m.close(); }),
+        UI.btn('Save & Re-test', 'btn-primary', function () {
+          var v = valIn.input.value.trim();
+          if (v === '') { valIn.setError('Enter a value'); return; }
+          var reason = reasonIn.input.value.trim();
+          if (reason.length < 4) { reasonIn.setError('Give a short reason — it is stored in the audit trail'); return; }
+          Store.correctData(a, record, field, v, reason);
+          m.close();
+          var res = Store.testStream(a, stream);
+          UI.toast({
+            kind: res.failed ? 'warn' : 'success',
+            title: rec.sampleId + ' updated',
+            text: res.failed
+              ? U.fmtInt(res.failed) + ' ' + stream + ' record(s) still failing.'
+              : 'All ' + stream + ' records now pass.'
+          });
+          showStreamResult(a, stream, res);
+        }, { icon: 'check' })
+      ]
+    });
+  };
 
   /** Sample ID · Field · Actual · Min · Max · Rule · Reason (§18). */
   function failureTable(a, res) {

@@ -12,6 +12,27 @@
   /* ============================================================
      STEP 1 — UPLOAD SAMPLE DATA
      ============================================================ */
+  /** STEP 2 — hand the user a correctly shaped file to populate. */
+  Screens.downloadSampleFile = function (a) {
+    var t = Store.sampleTemplate(a);
+    var name = Store.sampleTemplateName(a);
+    U.downloadText(name, U.toCSV(t.columns, t.rows));
+    Store.audit(a, {
+      action: 'Sample file downloaded',
+      detail: name + ' — ' + t.columns.length + ' columns, ' + t.rows.length + ' example rows', kind: 'info'
+    });
+    UI.toast({
+      kind: 'success', title: 'Sample file downloaded',
+      text: name + ' — ' + t.columns.length + ' columns with calibration, control and patient examples.'
+    });
+  };
+
+  function sampleFileBtn(a, cls) {
+    return UI.btn('Download Sample File', cls || 'btn-secondary btn-sm', function () {
+      Screens.downloadSampleFile(a);
+    }, { icon: 'download', iconSize: 14 });
+  }
+
   Screens.upload = function (a) {
     var body = el('div', {});
     var files = Store.filesOf(a);
@@ -20,14 +41,22 @@
       title: 'Upload Data Files',
       badge: '<span class="badge badge-info">Step 1 of ' + Store.STEPS.length + '</span>',
       actions: files.length ? [
+        sampleFileBtn(a),
         UI.btn('Add More Files', 'btn-primary btn-sm', function () { pickFiles(a); }, { icon: 'plus', iconSize: 14 })
-      ] : null,
+      ] : [sampleFileBtn(a)],
       body: files.length ? uploadedView(a) : dropView(a)
     }));
 
     if (!files.length) {
       body.appendChild(el('div', {
         class: 'alert alert-info mt4',
+        html: U.icon('info', 17) + '<div><div class="alert-t">Start from the sample file if you like</div>' +
+          '<p><strong>Download Sample File</strong> gives you the exact columns this analyte expects, with ' +
+          'calibration, control and patient example rows. Populate it and upload it back — or upload your own ' +
+          'file, since the columns are read from whatever you provide.</p></div>'
+      }));
+      body.appendChild(el('div', {
+        class: 'alert alert-info mt3',
         html: U.icon('info', 17) + '<div><div class="alert-t">One workflow, as many files as the run needs</div>' +
           '<p>Upload a single file or several — every file joins the <strong>same</strong> validation workflow. ' +
           'Files may contain control, calibration and patient records together, and may cover more than one analytic; ' +
@@ -66,6 +95,7 @@
     wrap.appendChild(input);
 
     var alt = el('div', { class: 'row mt4', style: 'justify-content:center' });
+    alt.appendChild(sampleFileBtn(a, 'btn-primary'));
     alt.appendChild(UI.btn('Use generated demo files', 'btn-secondary', function () { loadDemo(a); }, { icon: 'bolt' }));
     alt.appendChild(el('span', {
       class: 'muted', style: 'font-size:12px',

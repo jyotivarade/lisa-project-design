@@ -52,20 +52,21 @@ Upload Files → Analytics → Sample Types → Sample Selection → Criteria �
   | Check Calibrator Accuracy | Standard | `% Diff` | > 25 % → fail |
   | Check Control Accuracy | Control | `% Diff` | > 25 % → fail |
   | Check Internal Standard Errors | Unknown | `ISTD Area`, `% Recovery` | missing peak · recovery ratio < 90 % |
-  | Remove Concentrations Below Cut-off | Unknown | `Conc. (ng/mL)` | < cut-off → **value replaced with 0** |
+  | Flag Concentrations Below Cut-off | Unknown | `Conc. (ng/mL)` | < cut-off → flag (**value preserved**) |
   | Check Ion Ratio | Unknown | `Ref 1 Actual Ratio` | outside calibrator range ± Reference Ratio Adjustment |
   | Check Retention Time | Unknown | `Found RT` | outside calibrator average ± 20 % |
   | Check Calibration Range | Unknown | `Conc. (ng/mL)` | outside lowest–highest calibrator → warning |
 
-  Criteria form a **pipeline** — a later criterion sees what an earlier one rewrote, so a result zeroed
-  by the cut-off is not then flagged as below-range.
+  Criteria form a **pipeline**, but by default nothing is rewritten: each criterion reports on the value
+  as uploaded. Enabling a criterion's `Rewrite value to 0` restores the old chained behaviour, where a
+  result zeroed by the cut-off is not then flagged as below-range.
 * **Derived values** are computed from the run itself and shown on screen with their provenance: cut-off
   (Std. Conc. of the cut-off control), ion-ratio range (lowest/highest calibrator ratio widened by the
   analyte's adjustment, zero ratios excluded by default), RT window, calibrated measuring range.
-* **Outputs per file** — `Download Passed File` (rows that passed, with the criteria adjustments applied
-  plus `LISA Status` / `LISA Adjustments`) and `Download Exceptions Report` (one row per failed criterion
-  with analyte, assay, stream, source file, criterion, failed column, reason, severity, criteria version
-  and processing time). The passed file is **held** while any calibrator/control criterion fails or a run
+* **Outputs per file** — `Download Passed File` (rows that passed, in the source file's own columns and
+  order, values exactly as uploaded) and `Download Exceptions Report` (one row per failed criterion with
+  analyte, assay, stream, source file, sample ID, criterion, failed column, actual value, minimum,
+  maximum, reason, severity, criteria version and processing time). The passed file is **held** while any calibrator/control criterion fails or a run
   is stale; the exceptions report is always available.
 
 ## The core business rule
@@ -77,13 +78,14 @@ passes *and* the configuration is approved. A single failing QC record keeps the
 rule or the data is corrected and re-tested; patient records are then tested with the approved rules,
 straight from the same files.
 
-Changing a file, the analytics scope, the sample classification, the selected fields, a rule or its group
-logic creates a **new configuration version**, invalidates the approval and **re-locks patient testing**.
+Changing a file, the analytics scope, the sample classification, **which records are calibration or
+control**, the selected fields, a min/max rule, a criterion, a rule or its group logic creates a
+**new configuration version**, invalidates the approval and **re-locks patient testing**.
 
 ## Click-through journey
 
 Everything before the Analytics screen (login, dashboard, sidebar, header, analytics list/cards) is the
-original build. The enhanced flow lives entirely **inside** an analytic — a 9-step workflow:
+original build. The enhanced flow lives entirely **inside** an analytic:
 
 1. **Sign in** → Dashboard
 2. **Analytics** → open an analytic, or `+ Create Analytics`
@@ -117,6 +119,20 @@ original build. The enhanced flow lives entirely **inside** an analytic — a 9-
     file)
 14. **Validation History** / **Audit Logs** — versions, QC outcomes, and every change with before/after
     values and reasons
+
+### Uploaded data is never rewritten
+
+Processing reads the uploaded values and reports on them; it does not edit them.
+
+* The **passed file** is emitted with the source file's own columns, in its own order, carrying the
+  values exactly as uploaded — no status columns, no adjustments appended.
+* Criteria that used to overwrite a value (sub-cut-off concentrations, non-conforming ion ratios)
+  now **flag** the row instead. The old behaviour is still available per criterion via
+  `Rewrite value to 0`, which is **off** by default.
+* The one way a value ever changes is a deliberate on-screen correction (`Edit` → *Save & Re-test*),
+  which touches a single cell and records the before/after pair and a reason in the audit trail.
+* Uploaded rows are stored with the analytic, so a page reload brings back the same data. Only if the
+  browser's storage quota is exceeded are rows dropped, and the app says so rather than failing quietly.
 
 ### Failed records only
 

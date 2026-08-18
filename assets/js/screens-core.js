@@ -497,6 +497,10 @@
       label: 'Status', type: 'select', value: 'draft',
       options: [{ value: 'draft', label: 'Draft' }, { value: 'active', label: 'Active' }]
     });
+    var refRatio = UI.fieldGroup({
+      label: 'Reference Ratio Adjustment', type: 'number', value: 10, suffix: '%', step: '0.1',
+      hint: 'How far the calibrators’ ion-ratio range is widened before patient ratios are judged against it. Editable later in Analyte Configuration.'
+    });
     name.input.addEventListener('input', function () {
       if (!code.input.dataset.touched) {
         code.input.value = name.input.value.replace(/[^A-Za-z0-9]+/g, '').slice(0, 10).toUpperCase();
@@ -507,7 +511,7 @@
     var body = el('div', {}, [
       el('div', { class: 'form-grid two' }, [name, code]),
       el('div', { class: 'form-grid mt4' }, [desc]),
-      el('div', { class: 'form-grid two mt4' }, [status]),
+      el('div', { class: 'form-grid two mt4' }, [status, refRatio]),
       el('div', {
         class: 'alert alert-info mt4',
         html: U.icon('info', 16) + '<div><div class="alert-t">One file drives the whole workflow</div>' +
@@ -532,13 +536,23 @@
       else if (Store.all().some(function (a) { return a.code && a.code.toUpperCase() === code.input.value.trim().toUpperCase(); })) {
         code.setError('This code is already in use'); ok = false;
       }
+      var adj = parseFloat(refRatio.input.value);
+      refRatio.setError('');
+      if (isNaN(adj) || adj < 0 || adj > 100) {
+        refRatio.setError('Enter a percentage between 0 and 100'); return;
+      }
       if (!ok) return;
       var a = Store.create({
         name: name.input.value.trim(), code: code.input.value.trim().toUpperCase(),
         description: desc.input.value.trim(), status: status.input.value
       });
+      Store.assayOf(a).referenceRatioAdjustment = adj;
+      Store.save();
       m.close();
-      UI.toast({ kind: 'success', title: 'Analytic created', text: a.name + ' — continue by uploading a sample data file.' });
+      UI.toast({
+        kind: 'success', title: 'Analytics created',
+        text: a.name + ' — download the sample file, populate it, then upload it back.'
+      });
       App.go('analytic/' + a.id + '/upload');
     }
   };
